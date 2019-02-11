@@ -17,13 +17,24 @@
  */
 class GrContextThreadSafeProxyPriv {
 public:
-    const GrContextOptions& contextOptions() { return fProxy->fOptions; }
+    // from GrContext_Base
+    uint32_t contextID() const { return fProxy->contextID(); }
 
-    const GrCaps* caps() const { return fProxy->fCaps.get(); }
-    sk_sp<const GrCaps> refCaps() const { return fProxy->fCaps; }
-    uint32_t contextID() const { return fProxy->fContextID; }
-    GrBackendApi backend() const { return fProxy->fBackend; }
-    sk_sp<GrSkSLFPFactoryCache> fpFactoryCache() const;
+    bool matches(GrContext_Base* candidate) const { return fProxy->matches(candidate); }
+
+    const GrContextOptions& options() const { return fProxy->options(); }
+
+    const GrCaps* caps() const { return fProxy->caps(); }
+    sk_sp<const GrCaps> refCaps() const { return fProxy->refCaps(); }
+
+    sk_sp<GrSkSLFPFactoryCache> fpFactoryCache();
+
+    // GrContextThreadSafeProxyPriv
+    static sk_sp<GrContextThreadSafeProxy> Make(GrBackendApi,
+                                                const GrContextOptions&,
+                                                uint32_t contextID,
+                                                sk_sp<const GrCaps>,
+                                                sk_sp<GrSkSLFPFactoryCache>);
 
 private:
     explicit GrContextThreadSafeProxyPriv(GrContextThreadSafeProxy* proxy) : fProxy(proxy) {}

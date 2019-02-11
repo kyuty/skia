@@ -65,6 +65,8 @@ static DEFINE_bool(list, false, "List samples?");
 
 #ifdef SK_VULKAN
 #    define BACKENDS_STR "\"sw\", \"gl\", and \"vk\""
+#elif defined(SK_METAL) && defined(SK_BUILD_FOR_MAC)
+#    define BACKENDS_STR "\"sw\", \"gl\", and \"mtl\""
 #else
 #    define BACKENDS_STR "\"sw\" and \"gl\""
 #endif
@@ -87,6 +89,9 @@ const char* kBackendTypeStrings[sk_app::Window::kBackendTypeCount] = {
 #ifdef SK_VULKAN
     "Vulkan",
 #endif
+#if defined(SK_METAL) && defined(SK_BUILD_FOR_MAC)
+    "Metal",
+#endif
     "Raster"
 };
 
@@ -100,6 +105,11 @@ static sk_app::Window::BackendType get_backend_type(const char* str) {
     if (0 == strcmp(str, "angle")) {
         return sk_app::Window::kANGLE_BackendType;
     } else
+#endif
+#if defined(SK_METAL) && defined(SK_BUILD_FOR_MAC)
+        if (0 == strcmp(str, "mtl")) {
+            return sk_app::Window::kMetal_BackendType;
+        } else
 #endif
     if (0 == strcmp(str, "gl")) {
         return sk_app::Window::kNativeGL_BackendType;
@@ -1511,6 +1521,10 @@ void Viewer::drawImGui() {
                 ImGui::SameLine();
                 ImGui::RadioButton("Vulkan", &newBackend, sk_app::Window::kVulkan_BackendType);
 #endif
+#if defined(SK_METAL) && defined(SK_BUILD_FOR_MAC)
+                ImGui::SameLine();
+                ImGui::RadioButton("Metal", &newBackend, sk_app::Window::kMetal_BackendType);
+#endif
                 if (newBackend != fBackendType) {
                     fDeferredActions.push_back([=]() {
                         this->setBackend(static_cast<sk_app::Window::BackendType>(newBackend));
@@ -1584,7 +1598,7 @@ void Viewer::drawImGui() {
                         ImGui::RadioButton("Software", true);
                     } else if (fWindow->sampleCount() > 1) {
                         prButton(GpuPathRenderers::kAll);
-                        if (ctx->contextPriv().caps()->shaderCaps()->pathRenderingSupport()) {
+                        if (ctx->priv().caps()->shaderCaps()->pathRenderingSupport()) {
                             prButton(GpuPathRenderers::kStencilAndCover);
                         }
                         prButton(GpuPathRenderers::kTessellating);
@@ -1592,7 +1606,7 @@ void Viewer::drawImGui() {
                     } else {
                         prButton(GpuPathRenderers::kAll);
                         if (GrCoverageCountingPathRenderer::IsSupported(
-                                    *ctx->contextPriv().caps())) {
+                                    *ctx->priv().caps())) {
                             prButton(GpuPathRenderers::kCoverageCounting);
                         }
                         prButton(GpuPathRenderers::kSmall);
@@ -2074,7 +2088,7 @@ void Viewer::updateUIState() {
             if (!ctx) {
                 writer.appendString("Software");
             } else {
-                const auto* caps = ctx->contextPriv().caps();
+                const auto* caps = ctx->priv().caps();
 
                 writer.appendString(gPathRendererNames[GpuPathRenderers::kAll].c_str());
                 if (fWindow->sampleCount() > 1) {

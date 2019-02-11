@@ -251,7 +251,7 @@ void SkGpuDevice::drawTextureProducerImpl(GrTextureProducer* producer,
     bool doBicubic;
     GrSamplerState::Filter fm = GrSkFilterQualityToGrFilterMode(
             paint.getFilterQuality(), viewMatrix, srcToDstMatrix,
-            fContext->contextPriv().sharpenMipmappedTextures(), &doBicubic);
+            fContext->priv().options().fSharpenMipmappedTextures, &doBicubic);
     const GrSamplerState::Filter* filterMode = doBicubic ? nullptr : &fm;
 
     GrTextureProducer::FilterConstraint constraintMode;
@@ -289,11 +289,8 @@ void SkGpuDevice::drawTextureProducerImpl(GrTextureProducer* producer,
     }
     auto fp = producer->createFragmentProcessor(*textureMatrix, clippedSrcRect, constraintMode,
                                                 coordsAllInsideSrcRect, filterMode);
-    SkColorSpace* rtColorSpace = fRenderTargetContext->colorSpaceInfo().colorSpace();
-    SkColorSpace* targetColorSpace = producer->targetColorSpace();
-    SkColorSpace* dstColorSpace = SkToBool(rtColorSpace) ? rtColorSpace : targetColorSpace;
     fp = GrColorSpaceXformEffect::Make(std::move(fp), producer->colorSpace(), producer->alphaType(),
-                                       dstColorSpace);
+                                       fRenderTargetContext->colorSpaceInfo().colorSpace());
     if (!fp) {
         return;
     }

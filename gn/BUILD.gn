@@ -221,7 +221,7 @@ config("default") {
     ldflags += [ "-Wl,-w" ]
   }
 
-  if (sanitize != "") {
+  if (sanitize != "" && sanitize != "MSVC") {
     # You can either pass the sanitizers directly, e.g. "address,undefined",
     # or pass one of the couple common aliases used by the bots.
     sanitizers = sanitize
@@ -322,6 +322,9 @@ config("warnings") {
       "-Wno-unknown-warning-option",  # Let older Clangs ignore newer Clangs' warnings.
     ]
 
+    if (is_win) {
+      cflags += [ "-Wno-extra-semi-stmt" ]
+    }
     if (target_cpu == "arm" && is_ios) {
       # Clang seems to think new/malloc will only be 4-byte aligned on 32-bit iOS.
       # We're pretty sure it's actually 8-byte alignment.
@@ -428,7 +431,7 @@ config("debug_symbols") {
   } else if (is_win) {
     cflags = [ "/Z7" ]
     if (is_clang) {
-      cflags += [ "-mllvm", "-emit-codeview-ghash-section" ]
+      cflags += [ "-gcodeview-ghash" ]
       ldflags = [ "/DEBUG:GHASH" ]
     } else {
       ldflags = [ "/DEBUG:FASTLINK" ]
@@ -481,6 +484,15 @@ config("optimize") {
 
 config("NDEBUG") {
   defines = [ "NDEBUG" ]
+}
+
+config("msvc_rtc") {
+  defines = [ "_ALLOW_RTCc_IN_STL" ]
+  cflags = [
+    "/RTCcsu",
+    "/guard:cf",
+  ]
+  ldflags = [ "/guard:cf" ]
 }
 
 config("executable") {

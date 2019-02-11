@@ -8,15 +8,10 @@
 #ifndef GrContextThreadSafeProxy_DEFINED
 #define GrContextThreadSafeProxy_DEFINED
 
-#include "GrContextOptions.h"
-#include "SkRefCnt.h"
+#include "../private/GrContext_Base.h"
 
 class GrBackendFormat;
-class GrCaps;
-class GrContext;
-class GrContext_Base;
 class GrContextThreadSafeProxyPriv;
-class GrSkSLFPFactoryCache;
 struct SkImageInfo;
 class SkSurfaceCharacterization;
 
@@ -24,11 +19,9 @@ class SkSurfaceCharacterization;
  * Can be used to perform actions related to the generating GrContext in a thread safe manner. The
  * proxy does not access the 3D API (e.g. OpenGL) that backs the generating GrContext.
  */
-class SK_API GrContextThreadSafeProxy : public SkRefCnt {
+class SK_API GrContextThreadSafeProxy : public GrContext_Base {
 public:
     ~GrContextThreadSafeProxy() override;
-
-    bool matches(GrContext_Base* context) const;
 
     /**
      *  Create a surface characterization for a DDL that will be replayed into the GrContext
@@ -59,17 +52,20 @@ public:
      *                               allocated for mipmaps?
      *  @param willUseGLFBO0         Will the surface the DDL will be replayed into be backed by GL
      *                               FBO 0. This flag is only valid if using an GL backend.
+     *  @param isTextureable         Will the surface be able to act as a texture?
      */
     SkSurfaceCharacterization createCharacterization(
                                   size_t cacheMaxResourceBytes,
                                   const SkImageInfo& ii, const GrBackendFormat& backendFormat,
                                   int sampleCount, GrSurfaceOrigin origin,
                                   const SkSurfaceProps& surfaceProps,
-                                  bool isMipMapped, bool willUseGLFBO0 = false);
+                                  bool isMipMapped,
+                                  bool willUseGLFBO0 = false,
+                                  bool isTextureable = true);
 
     bool operator==(const GrContextThreadSafeProxy& that) const {
         // Each GrContext should only ever have a single thread-safe proxy.
-        SkASSERT((this == &that) == (fContextID == that.fContextID));
+        SkASSERT((this == &that) == (this->contextID() == that.contextID()));
         return this == &that;
     }
 
@@ -80,23 +76,14 @@ public:
     const GrContextThreadSafeProxyPriv priv() const;
 
 private:
+    friend class GrContextThreadSafeProxyPriv; // for ctor and hidden methods
+
     // DDL TODO: need to add unit tests for backend & maybe options
-    GrContextThreadSafeProxy(sk_sp<const GrCaps> caps,
-                             uint32_t uniqueID,
-                             GrBackendApi backend,
-                             const GrContextOptions& options,
-                             sk_sp<GrSkSLFPFactoryCache> cache);
+    GrContextThreadSafeProxy(GrBackendApi, const GrContextOptions&, uint32_t contextID);
 
-    sk_sp<const GrCaps>         fCaps;
-    const uint32_t              fContextID;
-    const GrBackendApi          fBackend;
-    const GrContextOptions      fOptions;
-    sk_sp<GrSkSLFPFactoryCache> fFPFactoryCache;
+    bool init(sk_sp<const GrCaps>, sk_sp<GrSkSLFPFactoryCache>) override;
 
-    friend class GrDirectContext; // To construct this object
-    friend class GrContextThreadSafeProxyPriv;
-
-    typedef SkRefCnt INHERITED;
+    typedef GrContext_Base INHERITED;
 };
 
 #endif

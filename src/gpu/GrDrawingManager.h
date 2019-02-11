@@ -8,6 +8,7 @@
 #ifndef GrDrawingManager_DEFINED
 #define GrDrawingManager_DEFINED
 
+#include "GrBufferAllocPool.h"
 #include "GrDeferredUpload.h"
 #include "GrPathRenderer.h"
 #include "GrPathRendererChain.h"
@@ -77,7 +78,10 @@ public:
                                                       GrBackendSemaphore backendSemaphores[]);
 
     void addOnFlushCallbackObject(GrOnFlushCallbackObject*);
+
+#if GR_TEST_UTILS
     void testingOnly_removeOnFlushCallbackObject(GrOnFlushCallbackObject*);
+#endif
 
     void moveOpListsToDDL(SkDeferredDisplayList* ddl);
     void copyOpListsFromDDL(const SkDeferredDisplayList*, GrRenderTargetProxy* newDest);
@@ -158,9 +162,9 @@ private:
     GrContext*                        fContext;
     GrPathRendererChain::Options      fOptionsForPathRendererChain;
     GrTextContext::Options            fOptionsForTextContext;
-
-    std::unique_ptr<char[]>           fVertexBufferSpace;
-    std::unique_ptr<char[]>           fIndexBufferSpace;
+    // This cache is used by both the vertex and index pools. It reuses memory across multiple
+    // flushes.
+    sk_sp<GrBufferAllocPool::CpuBufferCache> fCpuBufferCache;
     // In debug builds we guard against improper thread handling
     GrSingleOwner*                    fSingleOwner;
 

@@ -41,7 +41,6 @@ class SkFont;
 class SkGlyphRunBuilder;
 class SkImage;
 class SkImageFilter;
-class SkMetaData;
 class SkPath;
 class SkPicture;
 class SkPixmap;
@@ -216,13 +215,6 @@ public:
         Frees up resources used by SkCanvas.
     */
     virtual ~SkCanvas();
-
-    /** Returns storage to associate additional data with the canvas.
-        The storage is freed when SkCanvas is deleted.
-
-        @return  storage that can be read from and written to
-    */
-    SkMetaData& getMetaData();
 
     /** Returns SkImageInfo for SkCanvas. If SkCanvas is not associated with raster surface or
         GPU surface, returned SkColorType is set to kUnknown_SkColorType.
@@ -2519,7 +2511,6 @@ private:
 
     int         fSaveCount;         // value returned by getSaveCount()
 
-    SkMetaData* fMetaData;
     std::unique_ptr<SkRasterHandleAllocator> fAllocator;
 
     SkSurface_Base*  fSurfaceBase;

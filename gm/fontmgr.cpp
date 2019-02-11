@@ -172,7 +172,7 @@ protected:
         }
     }
 
-    void onDraw(SkCanvas* canvas) override {
+    DrawResult onDraw(SkCanvas* canvas, SkString* errorMsg) override {
         SkFont font;
         font.setEdging(SkFont::Edging::kSubpixelAntiAlias);
         font.setSubpixel(true);
@@ -190,13 +190,15 @@ protected:
             }
         }
         if (nullptr == fset.get()) {
-            return;
+            *errorMsg = "No SkFontStyleSet";
+            return DrawResult::kFail;
         }
 
         canvas->translate(20, 40);
         this->exploreFamily(canvas, font, fset.get());
         canvas->translate(150, 0);
         this->iterateFamily(canvas, font, fset.get());
+        return DrawResult::kOk;
     }
 
 private:

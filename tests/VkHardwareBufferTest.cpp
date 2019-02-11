@@ -400,9 +400,12 @@ public:
         }
     }
     void cleanup() override {
-        this->releaseImage();
-
         fGrContext.reset();
+        this->releaseImage();
+        if (fSignalSemaphore != VK_NULL_HANDLE) {
+            fVkDestroySemaphore(fDevice, fSignalSemaphore, nullptr);
+            fSignalSemaphore = VK_NULL_HANDLE;
+        }
         fBackendContext.fMemoryAllocator.reset();
         if (fDevice != VK_NULL_HANDLE) {
             fVkDeviceWaitIdle(fDevice);
@@ -432,7 +435,7 @@ public:
             return;
         }
 
-        fGrContext->contextPriv().getGpu()->testingOnly_flushGpuAndSync();
+        fGrContext->priv().getGpu()->testingOnly_flushGpuAndSync();
     }
 
     bool flushSurfaceAndSignalSemaphore(skiatest::Reporter* reporter, sk_sp<SkSurface>) override;
@@ -488,6 +491,9 @@ private:
     VkPhysicalDeviceFeatures2*          fFeatures = nullptr;
     VkDebugReportCallbackEXT            fDebugCallback = VK_NULL_HANDLE;
     PFN_vkDestroyDebugReportCallbackEXT fDestroyDebugCallback = nullptr;
+
+    // We hold on to the semaphore so we can delete once the GPU is done.
+    VkSemaphore fSignalSemaphore = VK_NULL_HANDLE;
 
     VkDevice fDevice = VK_NULL_HANDLE;
 
@@ -676,9 +682,7 @@ bool VulkanTestHelper::importHardwareBuffer(skiatest::Reporter* reporter,
     const VkExternalMemoryImageCreateInfo externalMemoryImageInfo {
         VK_STRUCTURE_TYPE_EXTERNAL_MEMORY_IMAGE_CREATE_INFO, // sType
         &externalFormatInfo, // pNext
-        //nullptr, // pNext
         VK_EXTERNAL_MEMORY_HANDLE_TYPE_ANDROID_HARDWARE_BUFFER_BIT_ANDROID, // handleTypes
-        //0x80, // handleTypes
     };
 
     VkImageUsageFlags usageFlags = VK_IMAGE_USAGE_SAMPLED_BIT |
@@ -711,22 +715,6 @@ bool VulkanTestHelper::importHardwareBuffer(skiatest::Reporter* reporter,
         ERRORF(reporter, "Create Image failed, err: %d", err);
         return false;
     }
-
-    VkImageMemoryRequirementsInfo2 memReqsInfo;
-    memReqsInfo.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_REQUIREMENTS_INFO_2;
-    memReqsInfo.pNext = nullptr;
-    memReqsInfo.image = fImage;
-
-    VkMemoryDedicatedRequirements dedicatedMemReqs;
-    dedicatedMemReqs.sType = VK_STRUCTURE_TYPE_MEMORY_DEDICATED_REQUIREMENTS;
-    dedicatedMemReqs.pNext = nullptr;
-
-    VkMemoryRequirements2 memReqs;
-    memReqs.sType = VK_STRUCTURE_TYPE_MEMORY_REQUIREMENTS_2;
-    memReqs.pNext = &dedicatedMemReqs;
-
-    fVkGetImageMemoryRequirements2(fDevice, &memReqsInfo, &memReqs);
-    REPORTER_ASSERT(reporter, VK_TRUE == dedicatedMemReqs.requiresDedicatedAllocation);
 
     VkPhysicalDeviceMemoryProperties2 phyDevMemProps;
     phyDevMemProps.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_PROPERTIES_2;
@@ -917,7 +905,7 @@ bool VulkanTestHelper::exportSemaphore(skiatest::Reporter* reporter,
         ERRORF(reporter, "Failed to export signal semaphore, err: %d", err);
         return false;
     }
-    fVkDestroySemaphore(fDevice, semaphore, nullptr);
+    fSignalSemaphore = semaphore;
     return true;
 }
 
