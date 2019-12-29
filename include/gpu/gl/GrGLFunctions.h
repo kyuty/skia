@@ -10,8 +10,8 @@
 #define GrGLFunctions_DEFINED
 
 #include <cstring>
-#include "../private/SkTLogic.h"
-#include "GrGLTypes.h"
+#include "include/gpu/gl/GrGLTypes.h"
+#include "include/private/SkTLogic.h"
 
 
 extern "C" {
@@ -125,6 +125,7 @@ using GrGLMapBufferFn = GrGLvoid* GR_GL_FUNCTION_TYPE(GrGLenum target, GrGLenum 
 using GrGLMapBufferRangeFn = GrGLvoid* GR_GL_FUNCTION_TYPE(GrGLenum target, GrGLintptr offset, GrGLsizeiptr length, GrGLbitfield access);
 using GrGLMapBufferSubDataFn = GrGLvoid* GR_GL_FUNCTION_TYPE(GrGLuint target, GrGLintptr offset, GrGLsizeiptr size, GrGLenum access);
 using GrGLMapTexSubImage2DFn = GrGLvoid* GR_GL_FUNCTION_TYPE(GrGLenum target, GrGLint level, GrGLint xoffset, GrGLint yoffset, GrGLsizei width, GrGLsizei height, GrGLenum format, GrGLenum type, GrGLenum access);
+using GrGLPatchParameteriFn = GrGLvoid GR_GL_FUNCTION_TYPE(GrGLenum pname, GrGLint value);
 using GrGLPixelStoreiFn = GrGLvoid GR_GL_FUNCTION_TYPE(GrGLenum pname, GrGLint param);
 using GrGLPolygonModeFn = GrGLvoid GR_GL_FUNCTION_TYPE(GrGLenum face, GrGLenum mode);
 using GrGLPopGroupMarkerFn = GrGLvoid GR_GL_FUNCTION_TYPE();
@@ -132,7 +133,6 @@ using GrGLProgramBinaryFn = GrGLvoid GR_GL_FUNCTION_TYPE(GrGLuint program, GrGLe
 using GrGLProgramParameteriFn = GrGLvoid GR_GL_FUNCTION_TYPE(GrGLuint program, GrGLenum pname, GrGLint value);
 using GrGLPushGroupMarkerFn = GrGLvoid GR_GL_FUNCTION_TYPE(GrGLsizei length, const char* marker);
 using GrGLQueryCounterFn = GrGLvoid GR_GL_FUNCTION_TYPE(GrGLuint id, GrGLenum target);
-using GrGLRasterSamplesFn = GrGLvoid GR_GL_FUNCTION_TYPE(GrGLuint samples, GrGLboolean fixedsamplelocations);
 using GrGLReadBufferFn = GrGLvoid GR_GL_FUNCTION_TYPE(GrGLenum src);
 using GrGLReadPixelsFn = GrGLvoid GR_GL_FUNCTION_TYPE(GrGLint x, GrGLint y, GrGLsizei width, GrGLsizei height, GrGLenum format, GrGLenum type, GrGLvoid* pixels);
 using GrGLRenderbufferStorageFn = GrGLvoid GR_GL_FUNCTION_TYPE(GrGLenum target, GrGLenum internalformat, GrGLsizei width, GrGLsizei height);
@@ -252,6 +252,10 @@ using GrGLObjectLabelFn = GrGLvoid GR_GL_FUNCTION_TYPE(GrGLenum identifier, GrGL
 
 /** EXT_window_rectangles */
 using GrGLWindowRectanglesFn = GrGLvoid GR_GL_FUNCTION_TYPE(GrGLenum mode, GrGLsizei count, const GrGLint box[]);
+
+/** GL_QCOM_tiled_rendering */
+using GrGLStartTilingFn = GrGLvoid GR_GL_FUNCTION_TYPE(GrGLuint x, GrGLuint y, GrGLuint width, GrGLuint height, GrGLbitfield preserveMask);
+using GrGLEndTilingFn = GrGLvoid GR_GL_FUNCTION_TYPE(GrGLbitfield preserveMask);
 
 /** EGL functions */
 using GrEGLQueryStringFn = const char* GR_GL_FUNCTION_TYPE(GrEGLDisplay dpy, GrEGLint name);

@@ -5,16 +5,17 @@
  * found in the LICENSE file.
  */
 
-#include "DDLPromiseImageHelper.h"
+#include "tools/DDLPromiseImageHelper.h"
 
-#include "GrContext.h"
-#include "GrContextPriv.h"
-#include "GrGpu.h"
-#include "SkCachedData.h"
-#include "SkDeferredDisplayListRecorder.h"
-#include "SkImage_Base.h"
-#include "SkYUVAIndex.h"
-#include "SkYUVASizeInfo.h"
+#include "include/core/SkDeferredDisplayListRecorder.h"
+#include "include/core/SkPicture.h"
+#include "include/core/SkSerialProcs.h"
+#include "include/core/SkYUVAIndex.h"
+#include "include/core/SkYUVASizeInfo.h"
+#include "include/gpu/GrContext.h"
+#include "src/core/SkCachedData.h"
+#include "src/image/SkImage_Base.h"
+#include "src/image/SkImage_GpuYUVA.h"
 
 DDLPromiseImageHelper::PromiseImageCallbackContext::~PromiseImageCallbackContext() {
     SkASSERT(fDoneCnt == fNumImages);
@@ -23,24 +24,17 @@ DDLPromiseImageHelper::PromiseImageCallbackContext::~PromiseImageCallbackContext
     SkASSERT(!fTotalFulfills || fDoneCnt);
 
     if (fPromiseImageTexture) {
-        GrGpu* gpu = fContext->priv().getGpu();
-        gpu->deleteTestingOnlyBackendTexture(fPromiseImageTexture->backendTexture());
+        fContext->deleteBackendTexture(fPromiseImageTexture->backendTexture());
     }
 }
 
 void DDLPromiseImageHelper::PromiseImageCallbackContext::setBackendTexture(
         const GrBackendTexture& backendTexture) {
-    SkASSERT(!fUnreleasedFulfills);
-    if (fPromiseImageTexture) {
-        GrGpu* gpu = fContext->priv().getGpu();
-        gpu->deleteTestingOnlyBackendTexture(fPromiseImageTexture->backendTexture());
-    }
+    SkASSERT(!fPromiseImageTexture);
     fPromiseImageTexture = SkPromiseImageTexture::Make(backendTexture);
 }
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
-
-DDLPromiseImageHelper::~DDLPromiseImageHelper() {}
 
 sk_sp<SkData> DDLPromiseImageHelper::deflateSKP(const SkPicture* inputPicture) {
     SkSerialProcs procs;
@@ -50,66 +44,34 @@ sk_sp<SkData> DDLPromiseImageHelper::deflateSKP(const SkPicture* inputPicture) {
         auto helper = static_cast<DDLPromiseImageHelper*>(ctx);
 
         int id = helper->findOrDefineImage(image);
-        if (id >= 0) {
-            SkASSERT(helper->isValidID(id));
-            return SkData::MakeWithCopy(&id, sizeof(id));
-        }
 
-        return nullptr;
+        // Even if 'id' is invalid (i.e., -1) write it to the SKP
+        return SkData::MakeWithCopy(&id, sizeof(id));
     };
 
     return inputPicture->serialize(&procs);
 }
 
-// needed until we have SkRG_88_ColorType;
-static GrBackendTexture create_yuva_texture(GrGpu* gpu, const SkPixmap& pm,
+static GrBackendTexture create_yuva_texture(GrContext* context, const SkPixmap& pm,
                                             const SkYUVAIndex yuvaIndices[4], int texIndex) {
     SkASSERT(texIndex >= 0 && texIndex <= 3);
+
+#ifdef SK_DEBUG
     int channelCount = 0;
     for (int i = 0; i < SkYUVAIndex::kIndexCount; ++i) {
         if (yuvaIndices[i].fIndex == texIndex) {
             ++channelCount;
         }
     }
-    // Need to create an RG texture for two-channel planes
-    GrBackendTexture tex;
     if (2 == channelCount) {
-        SkASSERT(kRGBA_8888_SkColorType == pm.colorType());
-        SkAutoTMalloc<char> pixels(2 * pm.width()*pm.height());
-        char* currPixel = pixels;
-        for (int y = 0; y < pm.height(); ++y) {
-            for (int x = 0; x < pm.width(); ++x) {
-                SkColor color = pm.getColor(x, y);
-                currPixel[0] = SkColorGetR(color);
-                currPixel[1] = SkColorGetG(color);
-                currPixel += 2;
-            }
-        }
-        tex = gpu->createTestingOnlyBackendTexture(
-            pixels,
-            pm.width(),
-            pm.height(),
-            GrColorType::kRG_88,
-            false,
-            GrMipMapped::kNo,
-            2 * pm.width());
-    } else {
-        tex = gpu->createTestingOnlyBackendTexture(
-            pm.addr(),
-            pm.width(),
-            pm.height(),
-            pm.colorType(),
-            false,
-            GrMipMapped::kNo,
-            pm.rowBytes());
+        SkASSERT(kR8G8_unorm_SkColorType == pm.colorType());
     }
-    return tex;
+#endif
+
+    return context->createBackendTexture(&pm, 1, GrRenderable::kNo, GrProtected::kNo);
 }
 
 void DDLPromiseImageHelper::uploadAllToGPU(GrContext* context) {
-    GrGpu* gpu = context->priv().getGpu();
-    SkASSERT(gpu);
-
     for (int i = 0; i < fImageInfo.count(); ++i) {
         const PromiseImageInfo& info = fImageInfo[i];
 
@@ -123,7 +85,7 @@ void DDLPromiseImageHelper::uploadAllToGPU(GrContext* context) {
                 sk_sp<PromiseImageCallbackContext> callbackContext(
                                                         new PromiseImageCallbackContext(context));
 
-                callbackContext->setBackendTexture(create_yuva_texture(gpu, yuvPixmap,
+                callbackContext->setBackendTexture(create_yuva_texture(context, yuvPixmap,
                                                                        info.yuvaIndices(), j));
                 SkASSERT(callbackContext->promiseImageTexture());
 
@@ -135,45 +97,16 @@ void DDLPromiseImageHelper::uploadAllToGPU(GrContext* context) {
 
             const SkBitmap& bm = info.normalBitmap();
 
-            callbackContext->setBackendTexture(gpu->createTestingOnlyBackendTexture(
-                                                                bm.getPixels(),
-                                                                bm.width(),
-                                                                bm.height(),
-                                                                bm.colorType(),
-                                                                false, GrMipMapped::kNo,
-                                                                bm.rowBytes()));
+            GrBackendTexture backendTex = context->createBackendTexture(
+                                                        &bm.pixmap(), 1, GrRenderable::kNo,
+                                                        GrProtected::kNo);
+
+            callbackContext->setBackendTexture(backendTex);
+
             // The GMs sometimes request too large an image
             //SkAssertResult(callbackContext->backendTexture().isValid());
 
             fImageInfo[i].setCallbackContext(0, std::move(callbackContext));
-        }
-    }
-}
-
-void DDLPromiseImageHelper::replaceEveryOtherPromiseTexture(GrContext* context) {
-    GrGpu* gpu = context->priv().getGpu();
-    SkASSERT(gpu);
-
-    for (int i = 0; i < fImageInfo.count(); i += 2) {
-        PromiseImageInfo& info = fImageInfo[i];
-
-        // DDL TODO: how can we tell if we need mipmapping!
-        if (info.isYUV()) {
-            int numPixmaps;
-            SkAssertResult(SkYUVAIndex::AreValidIndices(info.yuvaIndices(), &numPixmaps));
-            for (int j = 0; j < numPixmaps; ++j) {
-                const SkPixmap& yuvPixmap = info.yuvPixmap(j);
-                info.callbackContext(j)->setBackendTexture(
-                        create_yuva_texture(gpu, yuvPixmap, info.yuvaIndices(), j));
-                SkASSERT(info.callbackContext(j)->promiseImageTexture());
-            }
-        } else {
-            const SkBitmap& bm = info.normalBitmap();
-            info.callbackContext(0)->setBackendTexture(gpu->createTestingOnlyBackendTexture(
-                    bm.getPixels(), bm.width(), bm.height(), bm.colorType(), false,
-                    GrMipMapped::kNo, bm.rowBytes()));
-            // The GMs sometimes request too large an image
-            // SkAssertResult(callbackContext->backendTexture().isValid());
         }
     }
 }
@@ -203,7 +136,9 @@ sk_sp<SkImage> DDLPromiseImageHelper::PromiseImageCreator(const void* rawData,
     SkASSERT(length == sizeof(int));
 
     const int* indexPtr = static_cast<const int*>(rawData);
-    SkASSERT(helper->isValidID(*indexPtr));
+    if (!helper->isValidID(*indexPtr)) {
+        return nullptr;
+    }
 
     const DDLPromiseImageHelper::PromiseImageInfo& curImage = helper->getInfo(*indexPtr);
 
@@ -235,22 +170,33 @@ sk_sp<SkImage> DDLPromiseImageHelper::PromiseImageCreator(const void* rawData,
             sizes[i] = SkISize::MakeEmpty();
         }
 
-        image = recorder->makeYUVAPromiseTexture(curImage.yuvColorSpace(),
-                                                 backendFormats,
-                                                 sizes,
-                                                 curImage.yuvaIndices(),
-                                                 curImage.overallWidth(),
-                                                 curImage.overallHeight(),
-                                                 GrSurfaceOrigin::kTopLeft_GrSurfaceOrigin,
-                                                 curImage.refOverallColorSpace(),
-                                                 DDLPromiseImageHelper::PromiseImageFulfillProc,
-                                                 DDLPromiseImageHelper::PromiseImageReleaseProc,
-                                                 DDLPromiseImageHelper::PromiseImageDoneProc,
-                                                 contexts,
-                                                 helper->fDelayReleaseCallback);
+        image = recorder->makeYUVAPromiseTexture(
+                curImage.yuvColorSpace(),
+                backendFormats,
+                sizes,
+                curImage.yuvaIndices(),
+                curImage.overallWidth(),
+                curImage.overallHeight(),
+                GrSurfaceOrigin::kTopLeft_GrSurfaceOrigin,
+                curImage.refOverallColorSpace(),
+                DDLPromiseImageHelper::PromiseImageFulfillProc,
+                DDLPromiseImageHelper::PromiseImageReleaseProc,
+                DDLPromiseImageHelper::PromiseImageDoneProc,
+                contexts,
+                SkDeferredDisplayListRecorder::PromiseImageApiVersion::kNew);
         for (int i = 0; i < textureCount; ++i) {
             curImage.callbackContext(i)->wasAddedToImage();
         }
+
+#ifdef SK_DEBUG
+        {
+            // By the peekProxy contract this image should not have a single backing proxy so
+            // should return null. The call should also not trigger the conversion to RGBA.
+            SkImage_GpuYUVA* yuva = reinterpret_cast<SkImage_GpuYUVA*>(image.get());
+            SkASSERT(!yuva->peekProxy());
+            SkASSERT(!yuva->peekProxy());  // the first call didn't force a conversion to RGBA
+        }
+#endif
     } else {
         const GrBackendTexture& backendTex = curImage.promiseTexture(0)->backendTexture();
         GrBackendFormat backendFormat = backendTex.getBackendFormat();
@@ -259,19 +205,20 @@ sk_sp<SkImage> DDLPromiseImageHelper::PromiseImageCreator(const void* rawData,
         // Each DDL recorder gets its own ref on the promise callback context for the
         // promise images it creates.
         // DDL TODO: sort out mipmapping
-        image = recorder->makePromiseTexture(backendFormat,
-                                             curImage.overallWidth(),
-                                             curImage.overallHeight(),
-                                             GrMipMapped::kNo,
-                                             GrSurfaceOrigin::kTopLeft_GrSurfaceOrigin,
-                                             curImage.overallColorType(),
-                                             curImage.overallAlphaType(),
-                                             curImage.refOverallColorSpace(),
-                                             DDLPromiseImageHelper::PromiseImageFulfillProc,
-                                             DDLPromiseImageHelper::PromiseImageReleaseProc,
-                                             DDLPromiseImageHelper::PromiseImageDoneProc,
-                                             (void*)curImage.refCallbackContext(0).release(),
-                                             helper->fDelayReleaseCallback);
+        image = recorder->makePromiseTexture(
+                backendFormat,
+                curImage.overallWidth(),
+                curImage.overallHeight(),
+                GrMipMapped::kNo,
+                GrSurfaceOrigin::kTopLeft_GrSurfaceOrigin,
+                curImage.overallColorType(),
+                curImage.overallAlphaType(),
+                curImage.refOverallColorSpace(),
+                DDLPromiseImageHelper::PromiseImageFulfillProc,
+                DDLPromiseImageHelper::PromiseImageReleaseProc,
+                DDLPromiseImageHelper::PromiseImageDoneProc,
+                (void*)curImage.refCallbackContext(0).release(),
+                SkDeferredDisplayListRecorder::PromiseImageApiVersion::kNew);
         curImage.callbackContext(0)->wasAddedToImage();
     }
     perRecorderContext->fPromiseImages->push_back(image);
@@ -294,7 +241,10 @@ int DDLPromiseImageHelper::addImage(SkImage* image) {
     SkImage_Base* ib = as_IB(image);
 
     SkImageInfo overallII = SkImageInfo::Make(image->width(), image->height(),
-                                              image->colorType(), image->alphaType(),
+                                              image->colorType() == kBGRA_8888_SkColorType
+                                                        ? kRGBA_8888_SkColorType
+                                                        : image->colorType(),
+                                              image->alphaType(),
                                               image->refColorSpace());
 
     PromiseImageInfo& newImageInfo = fImageInfo.emplace_back(fImageInfo.count(),
@@ -310,7 +260,7 @@ int DDLPromiseImageHelper::addImage(SkImage* image) {
         newImageInfo.setYUVData(std::move(yuvData), yuvaIndices, yuvColorSpace);
 
         // determine colortypes from index data
-        // for testing we only ever use A8 or RGBA8888
+        // for testing we only ever use A8, RG_88
         SkColorType colorTypes[SkYUVASizeInfo::kMaxCount] = {
             kUnknown_SkColorType, kUnknown_SkColorType,
             kUnknown_SkColorType, kUnknown_SkColorType
@@ -324,7 +274,7 @@ int DDLPromiseImageHelper::addImage(SkImage* image) {
             if (kUnknown_SkColorType == colorTypes[texIdx]) {
                 colorTypes[texIdx] = kAlpha_8_SkColorType;
             } else {
-                colorTypes[texIdx] = kRGBA_8888_SkColorType;
+                colorTypes[texIdx] = kR8G8_unorm_SkColorType;
             }
         }
 
@@ -342,6 +292,9 @@ int DDLPromiseImageHelper::addImage(SkImage* image) {
         }
     } else {
         sk_sp<SkImage> rasterImage = image->makeRasterImage(); // force decoding of lazy images
+        if (!rasterImage) {
+            return -1;
+        }
 
         SkBitmap tmp;
         tmp.allocPixels(overallII);
@@ -366,6 +319,5 @@ int DDLPromiseImageHelper::findOrDefineImage(SkImage* image) {
     }
 
     int newID = this->addImage(image);
-    SkASSERT(this->isValidID(newID));
     return newID;
 }

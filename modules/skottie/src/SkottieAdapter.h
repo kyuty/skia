@@ -8,16 +8,19 @@
 #ifndef SkottieAdapter_DEFINED
 #define SkottieAdapter_DEFINED
 
-#include "SkPoint.h"
-#include "SkRefCnt.h"
-#include "SkSize.h"
-#include "SkottieValue.h"
+#include "include/core/SkPoint.h"
+#include "include/core/SkRefCnt.h"
+#include "include/core/SkSize.h"
+#include "modules/skottie/src/SkottieValue.h"
+#include "modules/sksg/include/SkSGScene.h"
 
 namespace sksg {
 
+class BlurImageFilter;
 class Color;
 class Draw;
 class DropShadowImageFilter;
+class ExternalColorFilter;
 class Gradient;
 class Group;
 class LinearGradient;
@@ -27,13 +30,39 @@ class Path;
 class RadialGradient;
 class RenderNode;
 class RRect;
-class TextBlob;
+class ShaderEffect;
+class Transform;
 class TransformEffect;
 class TrimEffect;
 
 };
 
+namespace skjson {
+    class ObjectValue;
+}
+
 namespace skottie {
+namespace internal {
+
+class DiscardableAdaptorBase : public sksg::Animator {
+protected:
+    DiscardableAdaptorBase();
+
+    void onTick(float t) final;
+
+    virtual void onSync() = 0;
+
+private:
+    friend class AnimationBuilder;
+    void setAnimators(sksg::AnimatorList&&);
+
+    sksg::AnimatorList fAnimators;
+
+    using INHERITED = sksg::Animator;
+};
+
+
+} // namespace internal
 
 #define ADAPTER_PROPERTY(p_name, p_type, p_default) \
     const p_type& get##p_name() const {             \
@@ -107,10 +136,10 @@ private:
     sk_sp<sksg::Matrix<SkMatrix>> fMatrixNode;
 };
 
-class TransformAdapter3D final : public SkNVRefCnt<TransformAdapter3D> {
+class TransformAdapter3D : public SkRefCnt {
 public:
-    explicit TransformAdapter3D(sk_sp<sksg::Matrix<SkMatrix44>>);
-    ~TransformAdapter3D();
+    TransformAdapter3D();
+    ~TransformAdapter3D() override;
 
     struct Vec3 {
         float fX, fY, fZ;
@@ -128,12 +157,42 @@ public:
     ADAPTER_PROPERTY(Rotation   , Vec3, Vec3({  0,   0,   0}))
     ADAPTER_PROPERTY(Scale      , Vec3, Vec3({100, 100, 100}))
 
-    SkMatrix44 totalMatrix() const;
+    sk_sp<sksg::Transform> refTransform() const;
 
-private:
+protected:
     void apply();
 
+private:
+    virtual SkMatrix44 totalMatrix() const;
+
     sk_sp<sksg::Matrix<SkMatrix44>> fMatrixNode;
+
+    using INHERITED = SkRefCnt;
+};
+
+class CameraAdapter final : public TransformAdapter3D {
+public:
+    enum class Type {
+        kOneNode, // implicitly facing forward (decreasing z), does not auto-orient
+        kTwoNode, // explicitly facing a POI (the anchor point), auto-orients
+    };
+
+    static sk_sp<CameraAdapter> MakeDefault(const SkSize& viewport_size);
+
+    CameraAdapter(const SkSize& viewport_size, Type);
+    ~CameraAdapter() override;
+
+    ADAPTER_PROPERTY(Zoom, SkScalar, 0)
+
+private:
+    SkMatrix44 totalMatrix() const override;
+
+    SkPoint3 poi() const;
+
+    const SkSize fViewportSize;
+    const Type   fType;
+
+    using INHERITED = TransformAdapter3D;
 };
 
 class RepeaterAdapter final : public SkNVRefCnt<RepeaterAdapter> {
@@ -170,16 +229,16 @@ class GradientAdapter : public SkRefCnt {
 public:
     ADAPTER_PROPERTY(StartPoint, SkPoint        , SkPoint::Make(0, 0)   )
     ADAPTER_PROPERTY(EndPoint  , SkPoint        , SkPoint::Make(0, 0)   )
-    ADAPTER_PROPERTY(ColorStops, VectorValue    , VectorValue()         )
+    ADAPTER_PROPERTY(Stops     , VectorValue    , VectorValue()         )
 
 protected:
-    GradientAdapter(sk_sp<sksg::Gradient>, size_t stopCount);
+    GradientAdapter(sk_sp<sksg::Gradient>, size_t colorStopCount);
 
     const SkPoint& startPoint() const { return fStartPoint; }
     const SkPoint& endPoint()   const { return fEndPoint;   }
 
     sk_sp<sksg::Gradient> fGradient;
-    size_t                fStopCount;
+    size_t                fColorStopCount;
 
     virtual void onApply() = 0;
 
@@ -221,50 +280,6 @@ private:
 
     sk_sp<sksg::TrimEffect> fTrimEffect;
 };
-
-class DropShadowEffectAdapter final : public SkNVRefCnt<DropShadowEffectAdapter> {
-public:
-    explicit DropShadowEffectAdapter(sk_sp<sksg::DropShadowImageFilter>);
-    ~DropShadowEffectAdapter();
-
-    ADAPTER_PROPERTY(Color     , SkColor , SK_ColorBLACK)
-    ADAPTER_PROPERTY(Opacity   , SkScalar,           255)
-    ADAPTER_PROPERTY(Direction , SkScalar,             0)
-    ADAPTER_PROPERTY(Distance  , SkScalar,             0)
-    ADAPTER_PROPERTY(Softness  , SkScalar,             0)
-    ADAPTER_PROPERTY(ShadowOnly, bool    ,         false)
-
-private:
-    void apply();
-
-    const sk_sp<sksg::DropShadowImageFilter> fDropShadow;
-};
-
-class TextAdapter final : public SkNVRefCnt<TextAdapter> {
-public:
-    explicit TextAdapter(sk_sp<sksg::Group> root);
-    ~TextAdapter();
-
-    ADAPTER_PROPERTY(Text, TextValue, TextValue())
-
-    const sk_sp<sksg::Group>& root() const { return fRoot; }
-
-private:
-    void apply();
-    sk_sp<SkTextBlob> makeBlob() const;
-
-    sk_sp<sksg::Group>     fRoot;
-    sk_sp<sksg::TextBlob>  fTextNode;
-    sk_sp<sksg::Color>     fFillColor,
-                           fStrokeColor;
-    sk_sp<sksg::Draw>      fFillNode,
-                           fStrokeNode;
-
-    bool                   fHadFill   : 1, //  - state cached from the prev apply()
-                           fHadStroke : 1; //  /
-};
-
-#undef ADAPTER_PROPERTY
 
 } // namespace skottie
 

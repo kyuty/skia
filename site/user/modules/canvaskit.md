@@ -29,7 +29,7 @@ Samples
     margin: 2px;
   }
 
-  #patheffect, #ink {
+  #patheffect, #ink, #shaping {
     width: 400px;
     height: 400px;
   }
@@ -51,11 +51,11 @@ Samples
 </style>
 
 <div id=demo>
-  <h3>An Interactive Path</h3>
+  <h3>Go beyond the HTML Canvas2D</h3>
   <figure>
     <canvas id=patheffect width=400 height=400></canvas>
     <figcaption>
-      <a href="https://jsfiddle.skia.org/canvaskit/28004d8841e7e497013263598241a3c1edc21dc1cf87a679abba307f39fa5fe6"
+      <a href="https://jsfiddle.skia.org/canvaskit/ea89749ae8c90bce807ea2e7e34fb7b09b950cee70d9db0a9cdfd2d67bd48ef0"
           target=_blank rel=noopener>
         Star JSFiddle</a>
     </figcaption>
@@ -87,6 +87,16 @@ Samples
     <canvas id=sk_onboarding width=500 height=500></canvas>
   </a>
 
+  <h3>SkParagraph (using ICU and Harfbuzz)</h3>
+  <figure>
+    <canvas id=shaping width=500 height=500></canvas>
+    <figcaption>
+      <a href="https://jsfiddle.skia.org/canvaskit/56cb197c724dfdfad0c3d8133d4fcab587e4c4e7f31576e62c17251637d3745c"
+          target=_blank rel=noopener>
+        SkParagraph JSFiddle</a>
+    </figcaption>
+  </figure>
+
 </div>
 
 <script type="text/javascript" charset="utf-8">
@@ -96,7 +106,7 @@ Samples
   var locate_file = '';
   if (window.WebAssembly && typeof window.WebAssembly.compile === 'function') {
     console.log('WebAssembly is supported!');
-    locate_file = 'https://unpkg.com/canvaskit-wasm@0.3.0/bin/';
+    locate_file = 'https://unpkg.com/canvaskit-wasm@0.9.0/bin/';
   } else {
     console.log('WebAssembly is not supported (yet) on this browser.');
     document.getElementById('demo').innerHTML = "<div>WASM not supported by your browser. Try a recent version of Chrome, Firefox, Edge, or Safari.</div>";
@@ -112,10 +122,11 @@ Samples
   var fullBounds = {fLeft: 0, fTop: 0, fRight: 500, fBottom: 500};
   CanvasKitInit({
     locateFile: (file) => locate_file + file,
-  }).then((CK) => {
+  }).ready().then((CK) => {
     CanvasKit = CK;
     DrawingExample(CanvasKit);
     InkExample(CanvasKit);
+    ShapingExample(CanvasKit);
      // Set bounds to fix the 4:3 resolution of the legos
     SkottieExample(CanvasKit, 'sk_legos', legoJSON, {fLeft: -50, fTop: 0, fRight: 350, fBottom: 300});
     // Re-size to fit
@@ -173,8 +184,9 @@ Samples
 
     const textPaint = new CanvasKit.SkPaint();
     textPaint.setColor(CanvasKit.Color(40, 0, 0, 1.0));
-    textPaint.setTextSize(30);
     textPaint.setAntiAlias(true);
+
+    const textFont = new CanvasKit.SkFont(null, 30);
 
     let i = 0;
 
@@ -196,7 +208,7 @@ Samples
       canvas.clear(CanvasKit.Color(255, 255, 255, 1.0));
 
       canvas.drawPath(path, paint);
-      canvas.drawText('Try Clicking!', 10, 380, textPaint);
+      canvas.drawText('Try Clicking!', 10, 380, textPaint, textFont);
       canvas.flush();
       dpe.delete();
       path.delete();
@@ -216,8 +228,9 @@ Samples
     document.getElementById('patheffect').addEventListener('pointerdown', interact);
     preventScrolling(document.getElementById('patheffect'));
 
-    // A client would need to delete this if it didn't go on for ever.
-    //paint.delete();
+    // A client would need to delete this if it didn't go on forever.
+    // font.delete();
+    // paint.delete();
   }
 
   function InkExample(CanvasKit) {
@@ -291,6 +304,102 @@ Samples
     document.getElementById('ink').addEventListener('lostpointercapture', interact);
     document.getElementById('ink').addEventListener('pointerup', interact);
     preventScrolling(document.getElementById('ink'));
+    window.requestAnimationFrame(drawFrame);
+  }
+
+  function ShapingExample(CanvasKit) {
+    const surface = CanvasKit.MakeCanvasSurface('shaping');
+    if (!surface) {
+      console.log('Could not make surface');
+      return;
+    }
+    let robotoData = null;
+    fetch('https://storage.googleapis.com/skia-cdn/google-web-fonts/Roboto-Regular.ttf').then((resp) => {
+      resp.arrayBuffer().then((buffer) => {
+        robotoData = buffer;
+        requestAnimationFrame(drawFrame);
+      });
+    });
+
+    let emojiData = null;
+    fetch('https://storage.googleapis.com/skia-cdn/misc/NotoColorEmoji.ttf').then((resp) => {
+      resp.arrayBuffer().then((buffer) => {
+        emojiData = buffer;
+        requestAnimationFrame(drawFrame);
+      });
+    });
+
+    const skcanvas = surface.getCanvas();
+
+    const font = new CanvasKit.SkFont(null, 18);
+    const fontPaint = new CanvasKit.SkPaint();
+    fontPaint.setStyle(CanvasKit.PaintStyle.Fill);
+    fontPaint.setAntiAlias(true);
+
+    skcanvas.drawText(`Fetching Font data...`, 5, 450, fontPaint, font);
+    surface.flush();
+
+    const context = CanvasKit.currentContext();
+
+    let paragraph = null;
+    let X = 10;
+    let Y = 10;
+    const str = 'The quick brown fox 🦊 ate a zesty hamburgerfons 🍔.\nThe 👩‍👩‍👧‍👧 laughed.';
+
+    function drawFrame() {
+      if (robotoData && emojiData && !paragraph) {
+        const fontMgr = CanvasKit.SkFontMgr.FromData([robotoData, emojiData]);
+
+        const paraStyle = new CanvasKit.ParagraphStyle({
+          textStyle: {
+            color: CanvasKit.BLACK,
+            fontFamilies: ['Roboto', 'Noto Color Emoji'],
+            fontSize: 50,
+          },
+          textAlign: CanvasKit.TextAlign.Left,
+          maxLines: 7,
+          ellipsis: '...',
+        });
+
+        const builder = CanvasKit.ParagraphBuilder.Make(paraStyle, fontMgr);
+        builder.addText(str);
+        paragraph = builder.build();
+      }
+      if (!paragraph) {
+        requestAnimationFrame(drawFrame);
+        return;
+      }
+      CanvasKit.setCurrentContext(context);
+      skcanvas.clear(CanvasKit.WHITE);
+
+      const wrapTo = 350 + 150 * Math.sin(Date.now() / 2000);
+      paragraph.layout(wrapTo);
+      skcanvas.drawParagraph(paragraph, 0, 0);
+      skcanvas.drawLine(wrapTo, 0, wrapTo, 400, fontPaint);
+
+      let posA = paragraph.getGlyphPositionAtCoordinate(X, Y);
+      const cp = str.codePointAt(posA.pos);
+      if (cp) {
+        const glyph = String.fromCodePoint(cp);
+        skcanvas.drawText(`At (${X.toFixed(2)}, ${Y.toFixed(2)}) glyph is '${glyph}'`, 5, 450, fontPaint, font);
+      }
+
+      surface.flush();
+      requestAnimationFrame(drawFrame);
+    }
+
+    // Make animation interactive
+    let interact = (e) => {
+      // multiply by 4/5 to account for the difference in the canvas width and the CSS width.
+      // The 10 accounts for where the mouse actually is compared to where it is drawn.
+      X = (e.offsetX * 4/5) - 10;
+      Y = e.offsetY * 4/5;
+    };
+    document.getElementById('shaping').addEventListener('pointermove', interact);
+    document.getElementById('shaping').addEventListener('pointerdown', interact);
+    document.getElementById('shaping').addEventListener('lostpointercapture', interact);
+    document.getElementById('shaping').addEventListener('pointerup', interact);
+    preventScrolling(document.getElementById('shaping'));
     window.requestAnimationFrame(drawFrame);
   }
 

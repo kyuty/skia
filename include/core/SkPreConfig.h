@@ -44,7 +44,7 @@
 
 //////////////////////////////////////////////////////////////////////
 
-#ifdef SK_BUILD_FOR_WIN
+#if defined(SK_BUILD_FOR_WIN) && !defined(__clang__)
     #if !defined(SK_RESTRICT)
         #define SK_RESTRICT __restrict
     #endif
@@ -195,6 +195,11 @@
     #else
         #define SK_API
     #endif
+#endif
+
+// SK_SPI is functionally identical to SK_API, but used within src to clarify that it's less stable
+#if !defined(SK_SPI)
+    #define SK_SPI SK_API
 #endif
 
 #endif

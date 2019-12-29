@@ -10,12 +10,12 @@
 #ifndef GrPaint_DEFINED
 #define GrPaint_DEFINED
 
-#include "GrColor.h"
-#include "GrFragmentProcessor.h"
-#include "SkBlendMode.h"
-#include "SkRefCnt.h"
-#include "SkRegion.h"
-#include "SkTLazy.h"
+#include "include/core/SkBlendMode.h"
+#include "include/core/SkRefCnt.h"
+#include "include/core/SkRegion.h"
+#include "src/core/SkTLazy.h"
+#include "src/gpu/GrColor.h"
+#include "src/gpu/GrFragmentProcessor.h"
 
 class GrTextureProxy;
 class GrXPFactory;
@@ -81,11 +81,8 @@ public:
      * Helpers for adding color or coverage effects that sample a texture. The matrix is applied
      * to the src space position to compute texture coordinates.
      */
-    void addColorTextureProcessor(sk_sp<GrTextureProxy>, const SkMatrix&);
-    void addColorTextureProcessor(sk_sp<GrTextureProxy>, const SkMatrix&, const GrSamplerState&);
-
-    void addCoverageTextureProcessor(sk_sp<GrTextureProxy>, const SkMatrix&);
-    void addCoverageTextureProcessor(sk_sp<GrTextureProxy>, const SkMatrix&, const GrSamplerState&);
+    void addColorTextureProcessor(sk_sp<GrTextureProxy>, SkAlphaType, const SkMatrix&,
+                                  const GrSamplerState& = GrSamplerState::ClampBilerp());
 
     int numColorFragmentProcessors() const { return fColorFragmentProcessors.count(); }
     int numCoverageFragmentProcessors() const { return fCoverageFragmentProcessors.count(); }

@@ -5,9 +5,9 @@
  * found in the LICENSE file.
  */
 
-#include "SkSLCompiler.h"
+#include "src/sksl/SkSLCompiler.h"
 
-#include "Test.h"
+#include "tests/Test.h"
 
 static void test(skiatest::Reporter* r, const char* src, const SkSL::Program::Settings& settings,
                  const char* expected, SkSL::Program::Inputs* inputs,
@@ -106,6 +106,28 @@ DEF_TEST(SkSLMetalMatrices, r) {
          "    thread Outputs* _out = &_outputStruct;\n"
          "    float2x2 m5 = float2x2_from_float(float2x2_from_float4(float4(1.0, 2.0, 3.0, 4.0))[0][0]);\n"
          "    _out->sk_FragColor = float4((((((((((float2x2_from_float4(float4(1.0, 2.0, 3.0, 4.0))[0][0] + float2x2_from_float4(float4(0.0))[0][0]) + float2x2_from_float4(float4(1.0, 2.0, 3.0, 4.0))[0][0]) + float2x2_from_float(1.0)[0][0]) + m5[0][0]) + float2x2(float2(1.0, 2.0), float2(3.0, 4.0))[0][0]) + float2x2(float2(5.0, 6.0), float2(7.0, 8.0))[0][0]) + float3x3_from_float(1.0)[0][0]) + float3x3_from_float(2.0)[0][0]) + float4x4_from_float(1.0)[0][0]) + float4x4_from_float(2.0)[0][0]);\n"
+         "    return *_out;\n"
+         "}\n");
+}
+
+DEF_TEST(SkSLMetalConstantSwizzle, r) {
+    test(r,
+         "void main() {"
+         "sk_FragColor = half4(0.5).rgb1;"
+         "}",
+         *SkSL::ShaderCapsFactory::Default(),
+         "#include <metal_stdlib>\n"
+         "#include <simd/simd.h>\n"
+         "using namespace metal;\n"
+         "struct Inputs {\n"
+         "};\n"
+         "struct Outputs {\n"
+         "    float4 sk_FragColor [[color(0)]];\n"
+         "};\n"
+         "fragment Outputs fragmentMain(Inputs _in [[stage_in]], bool _frontFacing [[front_facing]], float4 _fragCoord [[position]]) {\n"
+         "    Outputs _outputStruct;\n"
+         "    thread Outputs* _out = &_outputStruct;\n"
+         "    _out->sk_FragColor = float4(float4(0.5).xyz, 1);\n"
          "    return *_out;\n"
          "}\n");
 }

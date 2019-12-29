@@ -5,13 +5,17 @@
  * found in the LICENSE file.
  */
 
-#include "GrImageContext.h"
+#include "include/private/GrImageContext.h"
 
-#include "GrCaps.h"
-#include "GrImageContextPriv.h"
-#include "GrProxyProvider.h"
-#include "GrSkSLFPFactoryCache.h"
+#include "src/gpu/GrCaps.h"
+#include "src/gpu/GrImageContextPriv.h"
+#include "src/gpu/GrProxyProvider.h"
+#include "src/gpu/effects/GrSkSLFP.h"
 
+#define ASSERT_SINGLE_OWNER \
+    SkDEBUGCODE(GrSingleOwner::AutoEnforce debug_SingleOwner(this->singleOwner());)
+
+///////////////////////////////////////////////////////////////////////////////////////////////////
 GrImageContext::GrImageContext(GrBackendApi backend,
                                const GrContextOptions& options,
                                uint32_t contextID)
@@ -21,11 +25,19 @@ GrImageContext::GrImageContext(GrBackendApi backend,
 
 GrImageContext::~GrImageContext() {}
 
+void GrImageContext::abandonContext() {
+    ASSERT_SINGLE_OWNER
+
+    fAbandoned = true;
+}
+
+bool GrImageContext::abandoned() const {
+    ASSERT_SINGLE_OWNER
+
+    return fAbandoned;
+}
+
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 sk_sp<const GrCaps> GrImageContextPriv::refCaps() const {
     return fContext->refCaps();
-}
-
-sk_sp<GrSkSLFPFactoryCache> GrImageContextPriv::fpFactoryCache() {
-    return fContext->fpFactoryCache();
 }

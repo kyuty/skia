@@ -8,10 +8,11 @@
 #ifndef GrGLSLShaderBuilder_DEFINED
 #define GrGLSLShaderBuilder_DEFINED
 
-#include "GrAllocator.h"
-#include "GrShaderVar.h"
-#include "glsl/GrGLSLUniformHandler.h"
-#include "SkTDArray.h"
+#include "include/private/SkTDArray.h"
+#include "src/gpu/GrAllocator.h"
+#include "src/gpu/GrShaderVar.h"
+#include "src/gpu/glsl/GrGLSLUniformHandler.h"
+#include "src/sksl/SkSLString.h"
 
 #include <stdarg.h>
 
@@ -43,16 +44,15 @@ public:
                              GrSLType coordType = kHalf2_GrSLType,
                              GrGLSLColorSpaceXformHelper* colorXformHelper = nullptr);
 
-
-    /** Does the work of appendTextureLookup and modulates the result by modulation. The result is
-        always a half4. modulation and the swizzle specified by SamplerHandle must both be
-        half4 or half. If modulation is "" or nullptr it this function acts as though
-        appendTextureLookup were called. */
-    void appendTextureLookupAndModulate(const char* modulation,
-                                        SamplerHandle,
-                                        const char* coordName,
-                                        GrSLType coordType = kHalf2_GrSLType,
-                                        GrGLSLColorSpaceXformHelper* colorXformHelper = nullptr);
+    /** Does the work of appendTextureLookup and blends the result by dst, treating the texture
+        lookup a the src input to the blend. The dst is assumed to be half4 and the result is always
+        a half4. If dst is nullptr we use half4(1) as the blend dst. */
+    void appendTextureLookupAndBlend(const char* dst,
+                                     SkBlendMode,
+                                     SamplerHandle,
+                                     const char* coordName,
+                                     GrSLType coordType = kHalf2_GrSLType,
+                                     GrGLSLColorSpaceXformHelper* colorXformHelper = nullptr);
 
     /** Adds a helper function to facilitate color gamut transformation, and produces code that
         returns the srcColor transformed into a new gamut (via multiplication by the xform from
@@ -164,7 +164,8 @@ protected:
         kBlendFuncExtended_GLSLPrivateFeature,
         kFramebufferFetch_GLSLPrivateFeature,
         kNoPerspectiveInterpolation_GLSLPrivateFeature,
-        kLastGLSLPrivateFeature = kNoPerspectiveInterpolation_GLSLPrivateFeature
+        kSampleVariables_GLSLPrivateFeature,
+        kLastGLSLPrivateFeature = kSampleVariables_GLSLPrivateFeature
     };
 
     /*
@@ -193,12 +194,14 @@ protected:
 
     void nextStage() {
         fShaderStrings.push_back();
-        fCompilerStrings.push_back(this->code().c_str());
-        fCompilerStringLengths.push_back((int)this->code().size());
         fCodeIndex++;
     }
 
-    SkString& versionDecl() { return fShaderStrings[kVersionDecl]; }
+    void deleteStage() {
+        fShaderStrings.pop_back();
+        fCodeIndex--;
+    }
+
     SkString& extensions() { return fShaderStrings[kExtensions]; }
     SkString& definitions() { return fShaderStrings[kDefinitions]; }
     SkString& precisionQualifier() { return fShaderStrings[kPrecisionQualifier]; }
@@ -213,7 +216,6 @@ protected:
     virtual void onFinalize() = 0;
 
     enum {
-        kVersionDecl,
         kExtensions,
         kDefinitions,
         kPrecisionQualifier,
@@ -224,12 +226,13 @@ protected:
         kFunctions,
         kMain,
         kCode,
+
+        kPrealloc = kCode + 6,  // 6 == Reasonable upper bound on number of processor stages
     };
 
     GrGLSLProgramBuilder* fProgramBuilder;
-    SkSTArray<kCode, const char*, true> fCompilerStrings;
-    SkSTArray<kCode, int, true> fCompilerStringLengths;
-    SkSTArray<kCode, SkString> fShaderStrings;
+    SkSL::String fCompilerString;
+    SkSTArray<kPrealloc, SkString> fShaderStrings;
     SkString fCode;
     SkString fFunctions;
     SkString fExtensions;
@@ -244,6 +247,7 @@ protected:
     friend class GrCCCoverageProcessor; // to access code().
     friend class GrGLSLProgramBuilder;
     friend class GrGLProgramBuilder;
+    friend class GrDawnProgramBuilder;
     friend class GrGLSLVaryingHandler; // to access noperspective interpolation feature.
     friend class GrGLPathProgramBuilder; // to access fInputs.
     friend class GrVkPipelineStateBuilder;

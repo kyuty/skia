@@ -25,6 +25,8 @@ SKIA_TREE_STATUS_URL = 'http://skia-tree-status.appspot.com'
 
 # Please add the complete email address here (and not just 'xyz@' or 'xyz').
 PUBLIC_API_OWNERS = (
+    'mtklein@chromium.org',
+    'mtklein@google.com',
     'reed@chromium.org',
     'reed@google.com',
     'bsalomon@chromium.org',
@@ -36,6 +38,7 @@ PUBLIC_API_OWNERS = (
 )
 
 AUTHORS_FILE_NAME = 'AUTHORS'
+RELEASE_NOTES_FILE_NAME = 'RELEASE_NOTES.txt'
 
 DOCS_PREVIEW_URL = 'https://skia.org/?cl='
 GOLD_TRYBOT_URL = 'https://gold.skia.org/search?issue='
@@ -43,7 +46,7 @@ GOLD_TRYBOT_URL = 'https://gold.skia.org/search?issue='
 SERVICE_ACCOUNT_SUFFIX = [
     '@%s.iam.gserviceaccount.com' % project for project in [
         'skia-buildbots.google.com', 'skia-swarming-bots', 'skia-public',
-        'skia-corp.google.com']]
+        'skia-corp.google.com', 'chops-service-accounts']]
 
 
 def _CheckChangeHasEol(input_api, output_api, source_file_filter=None):
@@ -189,6 +192,37 @@ def _CheckGNFormatted(input_api, output_api):
           '`%s` failed, try\n\t%s' % (' '.join(cmd), fix)))
   return results
 
+def _CheckIncludesFormatted(input_api, output_api):
+  """Make sure #includes in files we're changing have been formatted."""
+  files = [str(f) for f in input_api.AffectedFiles() if f.Action() != 'D']
+  cmd = ['python',
+         'tools/rewrite_includes.py',
+         '--dry-run'] + files
+  if 0 != subprocess.call(cmd):
+    return [output_api.PresubmitError('`%s` failed' % ' '.join(cmd))]
+  return []
+
+def _CheckCompileIsolate(input_api, output_api):
+  """Ensure that gen_compile_isolate.py does not change compile.isolate."""
+  # Only run the check if files were added or removed.
+  results = []
+  script = os.path.join('infra', 'bots', 'gen_compile_isolate.py')
+  isolate = os.path.join('infra', 'bots', 'compile.isolated')
+  for f in input_api.AffectedFiles():
+    if f.Action() in ('A', 'D', 'R'):
+      break
+    if f.LocalPath() in (script, isolate):
+      break
+  else:
+    return results
+
+  cmd = ['python', script, 'test']
+  try:
+    subprocess.check_output(cmd, stderr=subprocess.STDOUT)
+  except subprocess.CalledProcessError as e:
+    results.append(output_api.PresubmitError(e.output))
+  return results
+
 
 class _WarningsAsErrors():
   def __init__(self, output_api):
@@ -200,6 +234,24 @@ class _WarningsAsErrors():
     return self.output_api
   def __exit__(self, ex_type, ex_value, ex_traceback):
     self.output_api.PresubmitPromptWarning = self.old_warning
+
+
+def _CheckDEPSValid(input_api, output_api):
+  """Ensure that DEPS contains valid entries."""
+  results = []
+  script = os.path.join('infra', 'bots', 'check_deps.py')
+  relevant_files = ('DEPS', script)
+  for f in input_api.AffectedFiles():
+    if f.LocalPath() in relevant_files:
+      break
+  else:
+    return results
+  cmd = ['python', script]
+  try:
+    subprocess.check_output(cmd, stderr=subprocess.STDOUT)
+  except subprocess.CalledProcessError as e:
+    results.append(output_api.PresubmitError(e.output))
+  return results
 
 
 def _CommonChecks(input_api, output_api):
@@ -226,6 +278,9 @@ def _CommonChecks(input_api, output_api):
   results.extend(_CopyrightChecks(input_api, output_api,
                                   source_file_filter=sources))
   results.extend(_ToolFlags(input_api, output_api))
+  results.extend(_CheckCompileIsolate(input_api, output_api))
+  results.extend(_CheckDEPSValid(input_api, output_api))
+  results.extend(_CheckIncludesFormatted(input_api, output_api))
   return results
 
 
@@ -242,6 +297,7 @@ def CheckChangeOnUpload(input_api, output_api):
   results.extend(_InfraTests(input_api, output_api))
 
   results.extend(_CheckGNFormatted(input_api, output_api))
+  results.extend(_CheckReleaseNotesForPublicAPI(input_api, output_api))
   return results
 
 
@@ -257,7 +313,7 @@ def _CheckTreeStatus(input_api, output_api, json_url):
       input_api, output_api, json_url=json_url)
   if not tree_status_results:
     # Check for caution state only if tree is not closed.
-    connection = input_api.urllib2.urlopen(json_url)
+    connection = input_api.urllib_request.urlopen(json_url)
     status = input_api.json.loads(connection.read())
     connection.close()
     if ('caution' in status['message'].lower() and
@@ -272,7 +328,7 @@ def _CheckTreeStatus(input_api, output_api, json_url):
               message=short_text, long_text=long_text))
   else:
     # Tree status is closed. Put in message about contacting sheriff.
-    connection = input_api.urllib2.urlopen(
+    connection = input_api.urllib_request.urlopen(
         SKIA_TREE_STATUS_URL + '/current-sheriff')
     sheriff_details = input_api.json.loads(connection.read())
     if sheriff_details:
@@ -353,6 +409,31 @@ def _CheckOwnerIsInAuthorsFile(input_api, output_api):
       input_api.logging.error('AUTHORS file not found!')
 
   return results
+
+
+def _CheckReleaseNotesForPublicAPI(input_api, output_api):
+  """Checks to see if release notes file is updated with public API changes."""
+  results = []
+  public_api_changed = False
+  release_file_changed = False
+  for affected_file in input_api.AffectedFiles():
+    affected_file_path = affected_file.LocalPath()
+    file_path, file_ext = os.path.splitext(affected_file_path)
+    # We only care about files that end in .h and are under the top-level
+    # include dir, but not include/private.
+    if (file_ext == '.h' and
+        file_path.split(os.path.sep)[0] == 'include' and
+        'private' not in file_path):
+      public_api_changed = True
+    elif affected_file_path == RELEASE_NOTES_FILE_NAME:
+      release_file_changed = True
+
+  if public_api_changed and not release_file_changed:
+    results.append(output_api.PresubmitPromptWarning(
+        'If this change affects a client API, please add a summary line '
+        'to the %s file.' % RELEASE_NOTES_FILE_NAME))
+  return results
+
 
 
 def _CheckLGTMsForPublicAPI(input_api, output_api):
@@ -441,12 +522,6 @@ def PostUploadHook(cl, change, output_api):
   This hook does the following:
   * Adds a link to preview docs changes if there are any docs changes in the CL.
   * Adds 'No-Try: true' if the CL contains only docs changes.
-  * Adds 'No-Tree-Checks: true' for non master branch changes since they do not
-    need to be gated on the master branch's tree.
-  * Adds 'No-Try: true' for non master branch changes since trybots do not yet
-    work on them.
-  * Adds 'No-Presubmit: true' for non master branch changes since those don't
-    run the presubmit checks.
   """
 
   results = []
@@ -495,30 +570,6 @@ def PostUploadHook(cl, change, output_api):
           output_api.PresubmitNotifyResult(
               'Automatically added a link to preview the docs changes to the '
               'CL\'s description'))
-
-    # If the target ref is not master then add 'No-Tree-Checks: true' and
-    # 'No-Try: true' to the CL's description if it does not already exist there.
-    target_ref = cl.GetRemoteBranch()[1]
-    if target_ref != 'refs/remotes/origin/master':
-      if not _FooterExists(footers, 'No-Tree-Checks', 'true'):
-        new_description_lines.append('No-Tree-Checks: true')
-        results.append(
-            output_api.PresubmitNotifyResult(
-                'Branch changes do not need to rely on the master branch\'s '
-                'tree status. Automatically added \'No-Tree-Checks: true\' to '
-                'the CL\'s description'))
-      if not _FooterExists(footers, 'No-Try', 'true'):
-        new_description_lines.append('No-Try: true')
-        results.append(
-            output_api.PresubmitNotifyResult(
-                'Trybots do not yet work for non-master branches. '
-                'Automatically added \'No-Try: true\' to the CL\'s '
-                'description'))
-      if not _FooterExists(footers, 'No-Presubmit', 'true'):
-        new_description_lines.append('No-Presubmit: true')
-        results.append(
-            output_api.PresubmitNotifyResult(
-                'Branch changes do not run the presubmit checks.'))
 
     # If the description has changed update it.
     if new_description_lines != original_description_lines:

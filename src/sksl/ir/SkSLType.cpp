@@ -5,13 +5,23 @@
  * found in the LICENSE file.
  */
 
-#include "SkSLType.h"
-#include "SkSLContext.h"
+#include "src/sksl/SkSLContext.h"
+#include "src/sksl/ir/SkSLType.h"
 
 namespace SkSL {
 
 int Type::coercionCost(const Type& other) const {
     if (*this == other) {
+        return 0;
+    }
+    if (this->kind() == kNullable_Kind && other.kind() != kNullable_Kind) {
+        int result = this->componentType().coercionCost(other);
+        if (result != INT_MAX) {
+            ++result;
+        }
+        return result;
+    }
+    if (this->fName == "null" && other.kind() == kNullable_Kind) {
         return 0;
     }
     if (this->kind() == kVector_Kind && other.kind() == kVector_Kind) {

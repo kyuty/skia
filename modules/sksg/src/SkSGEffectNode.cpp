@@ -5,7 +5,7 @@
  * found in the LICENSE file.
  */
 
-#include "SkSGEffectNode.h"
+#include "modules/sksg/include/SkSGEffectNode.h"
 
 namespace sksg {
 
@@ -21,6 +21,10 @@ EffectNode::~EffectNode() {
 
 void EffectNode::onRender(SkCanvas* canvas, const RenderContext* ctx) const {
     fChild->render(canvas, ctx);
+}
+
+const RenderNode* EffectNode::onNodeAt(const SkPoint& p) const {
+    return fChild->nodeAt(p);
 }
 
 SkRect EffectNode::onRevalidate(InvalidationController* ic, const SkMatrix& ctm) {

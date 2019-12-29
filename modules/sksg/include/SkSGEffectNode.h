@@ -8,7 +8,7 @@
 #ifndef SkSGEffectNode_DEFINED
 #define SkSGEffectNode_DEFINED
 
-#include "SkSGRenderNode.h"
+#include "modules/sksg/include/SkSGRenderNode.h"
 
 namespace sksg {
 
@@ -24,6 +24,7 @@ protected:
     ~EffectNode() override;
 
     void onRender(SkCanvas*, const RenderContext*) const override;
+    const RenderNode* onNodeAt(const SkPoint&)     const override;
 
     SkRect onRevalidate(InvalidationController*, const SkMatrix&) override;
 

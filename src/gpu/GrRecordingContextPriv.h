@@ -8,7 +8,7 @@
 #ifndef GrRecordingContextPriv_DEFINED
 #define GrRecordingContextPriv_DEFINED
 
-#include "GrRecordingContext.h"
+#include "include/private/GrRecordingContext.h"
 
 /** Class that exposes methods to GrRecordingContext that are only intended for use internal to
     Skia. This class is purely a privileged window into GrRecordingContext. It should never have
@@ -25,8 +25,6 @@ public:
     const GrCaps* caps() const { return fContext->caps(); }
     sk_sp<const GrCaps> refCaps() const;
 
-    sk_sp<GrSkSLFPFactoryCache> fpFactoryCache();
-
     GrImageContext* asImageContext() { return fContext->asImageContext(); }
     GrRecordingContext* asRecordingContext() { return fContext->asRecordingContext(); }
     GrContext* asDirectContext() { return fContext->asDirectContext(); }
@@ -35,14 +33,81 @@ public:
     GrProxyProvider* proxyProvider() { return fContext->proxyProvider(); }
     const GrProxyProvider* proxyProvider() const { return fContext->proxyProvider(); }
 
+    bool abandoned() const { return fContext->abandoned(); }
+
     /** This is only useful for debug purposes */
     SkDEBUGCODE(GrSingleOwner* singleOwner() const { return fContext->singleOwner(); } )
 
     // from GrRecordingContext
-    sk_sp<GrOpMemoryPool> refOpMemoryPool();
-    GrOpMemoryPool* opMemoryPool() { return fContext->opMemoryPool(); }
+    GrDrawingManager* drawingManager() { return fContext->drawingManager(); }
+
+    GrOpMemoryPool* opMemoryPool() { return fContext->arenas().opMemoryPool(); }
+    SkArenaAlloc* recordTimeAllocator() { return fContext->arenas().recordTimeAllocator(); }
+    GrRecordingContext::Arenas arenas() { return fContext->arenas(); }
+
+    GrRecordingContext::OwnedArenas&& detachArenas() { return fContext->detachArenas(); }
+
+    void recordProgramInfo(const GrProgramInfo* programInfo) {
+        fContext->recordProgramInfo(programInfo);
+    }
+
+    void detachProgramInfos(SkTDArray<const GrProgramInfo*>* dst) {
+        fContext->detachProgramInfos(dst);
+    }
+
+    GrStrikeCache* getGrStrikeCache() { return fContext->getGrStrikeCache(); }
+    GrTextBlobCache* getTextBlobCache() { return fContext->getTextBlobCache(); }
+
+    /**
+     * Registers an object for flush-related callbacks. (See GrOnFlushCallbackObject.)
+     *
+     * NOTE: the drawing manager tracks this object as a raw pointer; it is up to the caller to
+     * ensure its lifetime is tied to that of the context.
+     */
+    void addOnFlushCallbackObject(GrOnFlushCallbackObject*);
+
+    /*
+     * Create a new render target context backed by a deferred-style
+     * GrRenderTargetProxy. We guarantee that "asTextureProxy" will succeed for
+     * renderTargetContexts created via this entry point.
+     */
+    std::unique_ptr<GrRenderTargetContext> makeDeferredRenderTargetContext(
+            SkBackingFit fit,
+            int width,
+            int height,
+            GrColorType,
+            sk_sp<SkColorSpace> colorSpace,
+            int sampleCnt = 1,
+            GrMipMapped = GrMipMapped::kNo,
+            GrSurfaceOrigin origin = kBottomLeft_GrSurfaceOrigin,
+            const SkSurfaceProps* surfaceProps = nullptr,
+            SkBudgeted = SkBudgeted::kYes,
+            GrProtected isProtected = GrProtected::kNo);
+
+    /*
+     * This method will attempt to create a renderTargetContext that has, at least, the number of
+     * channels and precision per channel as requested in 'config' (e.g., A8 and 888 can be
+     * converted to 8888). It may also swizzle the channels (e.g., BGRA -> RGBA).
+     * SRGB-ness will be preserved.
+     */
+    std::unique_ptr<GrRenderTargetContext> makeDeferredRenderTargetContextWithFallback(
+            SkBackingFit fit,
+            int width,
+            int height,
+            GrColorType,
+            sk_sp<SkColorSpace> colorSpace,
+            int sampleCnt = 1,
+            GrMipMapped = GrMipMapped::kNo,
+            GrSurfaceOrigin origin = kBottomLeft_GrSurfaceOrigin,
+            const SkSurfaceProps* surfaceProps = nullptr,
+            SkBudgeted budgeted = SkBudgeted::kYes,
+            GrProtected isProtected = GrProtected::kNo);
 
     GrAuditTrail* auditTrail() { return fContext->auditTrail(); }
+
+    // CONTEXT TODO: remove this backdoor
+    // In order to make progress we temporarily need a way to break CL impasses.
+    GrContext* backdoor();
 
 private:
     explicit GrRecordingContextPriv(GrRecordingContext* context) : fContext(context) {}

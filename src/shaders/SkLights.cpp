@@ -6,9 +6,8 @@
  * found in the LICENSE file.
  */
 
-#include "SkColorSpaceXformer.h"
-#include "SkLights.h"
-#include "SkReadBuffer.h"
+#include "src/core/SkReadBuffer.h"
+#include "src/shaders/SkLights.h"
 
 sk_sp<SkLights> SkLights::MakeFromBuffer(SkReadBuffer& buf) {
     Builder builder;
@@ -46,28 +45,6 @@ sk_sp<SkLights> SkLights::MakeFromBuffer(SkReadBuffer& buf) {
         }
     }
 
-    return builder.finish();
-}
-
-static SkColor3f xform_color(const SkColor3f& color, SkColorSpaceXformer* xformer) {
-    SkColor origColor = SkColorSetARGB(0xFF,
-                                       SkScalarRoundToInt(color.fX),
-                                       SkScalarRoundToInt(color.fY),
-                                       SkScalarRoundToInt(color.fZ));
-    SkColor xformedColor = xformer->apply(origColor);
-    return SkColor3f::Make(SkIntToScalar(SkGetPackedR32(xformedColor)),
-                           SkIntToScalar(SkGetPackedG32(xformedColor)),
-                           SkIntToScalar(SkGetPackedB32(xformedColor)));
-}
-
-sk_sp<SkLights> SkLights::makeColorSpace(SkColorSpaceXformer* xformer) const {
-    SkLights::Builder builder;
-    for (int i = 0; i < this->numLights(); i++) {
-        Light light(fLights[i].type(), xform_color(fLights[i].color(), xformer),
-                    fLights[i].fDirOrPos, fLights[i].fIntensity);
-        builder.add(light);
-    }
-    builder.setAmbientLightColor(xform_color(fAmbientLightColor, xformer));
     return builder.finish();
 }
 

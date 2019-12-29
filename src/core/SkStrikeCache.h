@@ -11,12 +11,11 @@
 #include <unordered_map>
 #include <unordered_set>
 
-#include "SkDescriptor.h"
-#include "SkStrike.h"
-#include "SkSpinlock.h"
-#include "SkTemplates.h"
+#include "include/private/SkSpinlock.h"
+#include "include/private/SkTemplates.h"
+#include "src/core/SkDescriptor.h"
+#include "src/core/SkStrike.h"
 
-class SkStrike;
 class SkTraceMemoryDump;
 
 #ifndef SK_DEFAULT_FONT_CACHE_COUNT_LIMIT
@@ -39,12 +38,12 @@ public:
     virtual bool canDelete() = 0;
 };
 
-class SkStrikeCache {
+class SkStrikeCache final : public SkStrikeForGPUCacheInterface {
     class Node;
 
 public:
     SkStrikeCache() = default;
-    ~SkStrikeCache();
+    ~SkStrikeCache() override;
 
     class ExclusiveStrikePtr {
     public:
@@ -70,15 +69,7 @@ public:
 
     static SkStrikeCache* GlobalStrikeCache();
 
-    static ExclusiveStrikePtr FindStrikeExclusive(const SkDescriptor&);
     ExclusiveStrikePtr findStrikeExclusive(const SkDescriptor&);
-    Node* findAndDetachStrike(const SkDescriptor&);
-
-    static ExclusiveStrikePtr CreateStrikeExclusive(
-            const SkDescriptor& desc,
-            std::unique_ptr<SkScalerContext> scaler,
-            SkFontMetrics* maybeMetrics = nullptr,
-            std::unique_ptr<SkStrikePinner> = nullptr);
 
     ExclusiveStrikePtr createStrikeExclusive(
             const SkDescriptor& desc,
@@ -86,23 +77,7 @@ public:
             SkFontMetrics* maybeMetrics = nullptr,
             std::unique_ptr<SkStrikePinner> = nullptr);
 
-    Node* createStrike(
-            const SkDescriptor& desc,
-            std::unique_ptr<SkScalerContext> scaler,
-            SkFontMetrics* maybeMetrics = nullptr,
-            std::unique_ptr<SkStrikePinner> = nullptr);
-
-    static ExclusiveStrikePtr FindOrCreateStrikeExclusive(
-            const SkDescriptor& desc,
-            const SkScalerContextEffects& effects,
-            const SkTypeface& typeface);
-
     ExclusiveStrikePtr findOrCreateStrikeExclusive(
-            const SkDescriptor& desc,
-            const SkScalerContextEffects& effects,
-            const SkTypeface& typeface);
-
-    Node* findOrCreateStrike(
             const SkDescriptor& desc,
             const SkScalerContextEffects& effects,
             const SkTypeface& typeface);
@@ -114,25 +89,9 @@ public:
                                    SkStrike* targetCache);
     bool desperationSearchForPath(const SkDescriptor& desc, SkGlyphID glyphID, SkPath* path);
 
-    static ExclusiveStrikePtr FindOrCreateStrikeExclusive(
-            const SkFont& font,
-            const SkPaint& paint,
-            const SkSurfaceProps& surfaceProps,
-            SkScalerContextFlags scalerContextFlags,
-            const SkMatrix& deviceMatrix);
-
-    Node* findOrCreateStrike(
-            const SkFont& font,
-            const SkPaint& paint,
-            const SkSurfaceProps& surfaceProps,
-            SkScalerContextFlags scalerContextFlags,
-            const SkMatrix& deviceMatrix);
-
-    // cons up a default paint, which is only needed for patheffects/maskfilter
-    static ExclusiveStrikePtr FindOrCreateStrikeWithNoDeviceExclusive(const SkFont&);
-
-    static ExclusiveStrikePtr FindOrCreateStrikeWithNoDeviceExclusive(const SkFont& font,
-                                                                      const SkPaint& paint);
+    SkScopedStrikeForGPU findOrCreateScopedStrike(const SkDescriptor& desc,
+                                                  const SkScalerContextEffects& effects,
+                                                  const SkTypeface& typeface) override;
 
     static std::unique_ptr<SkScalerContext> CreateScalerContext(
             const SkDescriptor&, const SkScalerContextEffects&, const SkTypeface&);
@@ -144,9 +103,6 @@ public:
     // Dump memory usage statistics of all the attaches caches in the process using the
     // SkTraceMemoryDump interface.
     static void DumpMemoryStatistics(SkTraceMemoryDump* dump);
-
-    // call when a glyphcache is available for caching (i.e. not in use)
-    void attachNode(Node* node);
 
     void purgeAll(); // does not change budget
 
@@ -160,39 +116,51 @@ public:
 
     int  getCachePointSizeLimit() const;
     int  setCachePointSizeLimit(int limit);
-
 #ifdef SK_DEBUG
-    // A simple accounting of what each glyph cache reports and the strike cache total.
-    void validate() const;
     // Make sure that each glyph cache's memory tracking and actual memory used are in sync.
     void validateGlyphCacheDataSize() const;
 #else
-    void validate() const {}
     void validateGlyphCacheDataSize() const {}
 #endif
 
 private:
+#ifdef SK_DEBUG
+    // A simple accounting of what each glyph cache reports and the strike cache total.
+    void validate() const SK_REQUIRES(fLock);
+#else
+    void validate() const {}
+#endif
+
+    Node* findAndDetachStrike(const SkDescriptor&) SK_EXCLUDES(fLock);
+    Node* createStrike(
+            const SkDescriptor& desc,
+            std::unique_ptr<SkScalerContext> scaler,
+            SkFontMetrics* maybeMetrics = nullptr,
+            std::unique_ptr<SkStrikePinner> = nullptr);
+    Node* findOrCreateStrike(
+            const SkDescriptor& desc,
+            const SkScalerContextEffects& effects,
+            const SkTypeface& typeface) SK_EXCLUDES(fLock);
+    void attachNode(Node* node) SK_EXCLUDES(fLock);
 
     // The following methods can only be called when mutex is already held.
-    Node* internalGetHead() const { return fHead; }
-    Node* internalGetTail() const { return fTail; }
-    void internalDetachCache(Node*);
-    void internalAttachToHead(Node*);
+    void internalDetachCache(Node*) SK_REQUIRES(fLock);
+    void internalAttachToHead(Node*) SK_REQUIRES(fLock);
 
     // Checkout budgets, modulated by the specified min-bytes-needed-to-purge,
     // and attempt to purge caches to match.
     // Returns number of bytes freed.
-    size_t internalPurge(size_t minBytesNeeded = 0);
+    size_t internalPurge(size_t minBytesNeeded = 0) SK_REQUIRES(fLock);
 
     void forEachStrike(std::function<void(const SkStrike&)> visitor) const;
 
     mutable SkSpinlock fLock;
-    Node*              fHead{nullptr};
-    Node*              fTail{nullptr};
-    size_t             fTotalMemoryUsed{0};
+    Node*              fHead SK_GUARDED_BY(fLock) {nullptr};
+    Node*              fTail SK_GUARDED_BY(fLock) {nullptr};
     size_t             fCacheSizeLimit{SK_DEFAULT_FONT_CACHE_LIMIT};
+    size_t             fTotalMemoryUsed SK_GUARDED_BY(fLock) {0};
     int32_t            fCacheCountLimit{SK_DEFAULT_FONT_CACHE_COUNT_LIMIT};
-    int32_t            fCacheCount{0};
+    int32_t            fCacheCount SK_GUARDED_BY(fLock) {0};
     int32_t            fPointSizeLimit{SK_DEFAULT_FONT_CACHE_POINT_SIZE_LIMIT};
 };
 

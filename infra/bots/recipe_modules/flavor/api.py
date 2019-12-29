@@ -12,8 +12,10 @@ from . import android
 from . import chromebook
 from . import chromecast
 from . import default
+from . import docker
 from . import ios
 from . import valgrind
+from . import win_ssh
 
 
 """Abstractions for running code on various platforms.
@@ -32,11 +34,14 @@ VERSION_FILE_LOTTIE = 'LOTTIE_VERSION'
 VERSION_FILE_SK_IMAGE = 'SK_IMAGE_VERSION'
 VERSION_FILE_SKP = 'SKP_VERSION'
 VERSION_FILE_SVG = 'SVG_VERSION'
+VERSION_FILE_MSKP = 'MSKP_VERSION'
+VERSION_FILE_TEXTTRACES = 'TEXTTRACES_VERSION'
 
 VERSION_NONE = -1
 
 def is_android(vars_api):
-  return 'Android' in vars_api.extra_tokens
+  return ('Android' in vars_api.extra_tokens or
+          'Android' in vars_api.builder_cfg.get('os', ''))
 
 def is_chromecast(vars_api):
   return ('Chromecast' in vars_api.extra_tokens or
@@ -45,6 +50,9 @@ def is_chromecast(vars_api):
 def is_chromebook(vars_api):
   return ('Chromebook' in vars_api.extra_tokens or
           'ChromeOS' in vars_api.builder_cfg.get('os', ''))
+
+def is_docker(vars_api):
+  return 'Docker' in vars_api.extra_tokens
 
 def is_ios(vars_api):
   return ('iOS' in vars_api.extra_tokens or
@@ -57,6 +65,9 @@ def is_test_skqp(vars_api):
 def is_valgrind(vars_api):
   return 'Valgrind' in vars_api.extra_tokens
 
+def is_win_ssh(vars_api):
+  return 'LenovoYogaC630' in vars_api.builder_cfg.get('model', '')
+
 
 class SkiaFlavorApi(recipe_api.RecipeApi):
   def get_flavor(self, vars_api):
@@ -67,10 +78,14 @@ class SkiaFlavorApi(recipe_api.RecipeApi):
       return chromebook.ChromebookFlavor(self)
     if is_android(vars_api) and not is_test_skqp(vars_api):
       return android.AndroidFlavor(self)
+    elif is_docker(vars_api):
+      return docker.DockerFlavor(self)
     elif is_ios(vars_api):
       return ios.iOSFlavor(self)
     elif is_valgrind(vars_api):
       return valgrind.ValgrindFlavor(self)
+    elif is_win_ssh(vars_api):
+      return win_ssh.WinSSHFlavor(self)
     else:
       return default.DefaultFlavor(self)
 
@@ -108,9 +123,11 @@ class SkiaFlavorApi(recipe_api.RecipeApi):
     return self._f.remove_file_on_device(path)
 
   def install(self, skps=False, images=False, lotties=False, svgs=False,
-              resources=False):
+              resources=False, mskps=False, texttraces=False):
     self._f.install()
 
+    if texttraces:
+      self._copy_texttraces()
     # TODO(borenet): Only copy files which have changed.
     if resources:
       self.copy_directory_contents_to_device(
@@ -125,6 +142,8 @@ class SkiaFlavorApi(recipe_api.RecipeApi):
       self._copy_lotties()
     if svgs:
       self._copy_svgs()
+    if mskps:
+      self._copy_mskps()
 
   def cleanup_steps(self):
     return self._f.cleanup_steps()
@@ -204,4 +223,32 @@ class SkiaFlavorApi(recipe_api.RecipeApi):
         self.m.vars.tmp_dir,
         self.host_dirs.svg_dir,
         self.device_dirs.svg_dir)
+    return version
+
+  def _copy_mskps(self):
+    """Copy the MSKPs if needed."""
+    version = self.m.run.asset_version('mskp', self._skia_dir)
+    self.m.run.writefile(
+        self.m.path.join(self.m.vars.tmp_dir, VERSION_FILE_MSKP),
+        version)
+    self._copy_dir(
+        version,
+        VERSION_FILE_MSKP,
+        self.m.vars.tmp_dir,
+        self.host_dirs.mskp_dir,
+        self.device_dirs.mskp_dir)
+    return version
+
+  def _copy_texttraces(self):
+    """Copy the text traces if needed."""
+    version = self.m.run.asset_version('text_blob_traces', self._skia_dir)
+    self.m.run.writefile(
+        self.m.path.join(self.m.vars.tmp_dir, VERSION_FILE_TEXTTRACES),
+        version)
+    self._copy_dir(
+        version,
+        VERSION_FILE_TEXTTRACES,
+        self.m.vars.tmp_dir,
+        self.host_dirs.texttraces_dir,
+        self.device_dirs.texttraces_dir)
     return version

@@ -6,25 +6,34 @@
  */
 
 
-#include "GrContext.h"
+#include "include/gpu/GrContext.h"
 
-#include "GrContextPriv.h"
-#include "GrContextThreadSafeProxy.h"
-#include "GrContextThreadSafeProxyPriv.h"
-#include "GrGpu.h"
+#include "include/gpu/GrContextThreadSafeProxy.h"
+#include "src/gpu/GrContextPriv.h"
+#include "src/gpu/GrContextThreadSafeProxyPriv.h"
+#include "src/gpu/GrGpu.h"
 
-#include "effects/GrSkSLFP.h"
-#include "gl/GrGLGpu.h"
-#include "mock/GrMockGpu.h"
-#include "text/GrStrikeCache.h"
+#include "src/gpu/effects/GrSkSLFP.h"
+#include "src/gpu/gl/GrGLGpu.h"
+#include "src/gpu/mock/GrMockGpu.h"
+#include "src/gpu/text/GrStrikeCache.h"
 #ifdef SK_METAL
-#include "mtl/GrMtlTrampoline.h"
+#include "src/gpu/mtl/GrMtlTrampoline.h"
 #endif
 #ifdef SK_VULKAN
-#include "vk/GrVkGpu.h"
+#include "src/gpu/vk/GrVkGpu.h"
+#endif
+#ifdef SK_DAWN
+#include "src/gpu/dawn/GrDawnGpu.h"
 #endif
 
-class SK_API GrLegacyDirectContext : public GrContext {
+#ifdef SK_DISABLE_REDUCE_OPLIST_SPLITTING
+static const bool kDefaultReduceOpsTaskSplitting = false;
+#else
+static const bool kDefaultReduceOpsTaskSplitting = false;
+#endif
+
+class GrLegacyDirectContext : public GrContext {
 public:
     GrLegacyDirectContext(GrBackendApi backend, const GrContextOptions& options)
             : INHERITED(backend, options)
@@ -59,19 +68,27 @@ public:
     }
 
 protected:
-    bool init(sk_sp<const GrCaps> caps, sk_sp<GrSkSLFPFactoryCache> FPFactoryCache) override {
-        SkASSERT(caps && !FPFactoryCache);
+    bool init(sk_sp<const GrCaps> caps) override {
+        SkASSERT(caps);
         SkASSERT(!fThreadSafeProxy);
 
-        FPFactoryCache.reset(new GrSkSLFPFactoryCache());
         fThreadSafeProxy = GrContextThreadSafeProxyPriv::Make(this->backend(),
                                                               this->options(),
                                                               this->contextID(),
-                                                              caps, FPFactoryCache);
+                                                              caps);
 
-        if (!INHERITED::init(std::move(caps), std::move(FPFactoryCache))) {
+        if (!INHERITED::init(std::move(caps))) {
             return false;
         }
+
+        bool reduceOpsTaskSplitting = kDefaultReduceOpsTaskSplitting;
+        if (GrContextOptions::Enable::kNo == this->options().fReduceOpsTaskSplitting) {
+            reduceOpsTaskSplitting = false;
+        } else if (GrContextOptions::Enable::kYes == this->options().fReduceOpsTaskSplitting) {
+            reduceOpsTaskSplitting = true;
+        }
+
+        this->setupDrawingManager(true, reduceOpsTaskSplitting);
 
         SkASSERT(this->caps());
 
@@ -85,7 +102,7 @@ protected:
             allowMultitexturing = GrDrawOpAtlas::AllowMultitexturing::kYes;
         }
 
-        GrStrikeCache* glyphCache = this->priv().getGlyphCache();
+        GrStrikeCache* glyphCache = this->priv().getGrStrikeCache();
         GrProxyProvider* proxyProvider = this->priv().proxyProvider();
 
         fAtlasManager = new GrAtlasManager(proxyProvider, glyphCache,
@@ -104,6 +121,7 @@ private:
     typedef GrContext INHERITED;
 };
 
+#ifdef SK_GL
 sk_sp<GrContext> GrContext::MakeGL(sk_sp<const GrGLInterface> interface) {
     GrContextOptions defaultOptions;
     return MakeGL(std::move(interface), defaultOptions);
@@ -127,11 +145,12 @@ sk_sp<GrContext> GrContext::MakeGL(sk_sp<const GrGLInterface> interface,
         return nullptr;
     }
 
-    if (!context->init(context->fGpu->refCaps(), nullptr)) {
+    if (!context->init(context->fGpu->refCaps())) {
         return nullptr;
     }
     return context;
 }
+#endif
 
 sk_sp<GrContext> GrContext::MakeMock(const GrMockOptions* mockOptions) {
     GrContextOptions defaultOptions;
@@ -147,9 +166,16 @@ sk_sp<GrContext> GrContext::MakeMock(const GrMockOptions* mockOptions,
         return nullptr;
     }
 
-    if (!context->init(context->fGpu->refCaps(), nullptr)) {
+    if (!context->init(context->fGpu->refCaps())) {
         return nullptr;
     }
+
+#if GR_TEST_UTILS
+    if (mockOptions && mockOptions->fFailTextureAllocations) {
+        context->testingOnly_setSuppressAllocationWarnings();
+    }
+#endif
+
     return context;
 }
 
@@ -173,7 +199,7 @@ sk_sp<GrContext> GrContext::MakeVulkan(const GrVkBackendContext& backendContext,
         return nullptr;
     }
 
-    if (!context->init(context->fGpu->refCaps(), nullptr)) {
+    if (!context->init(context->fGpu->refCaps())) {
         return nullptr;
     }
     return context;
@@ -196,10 +222,30 @@ sk_sp<GrContext> GrContext::MakeMetal(void* device, void* queue, const GrContext
         return nullptr;
     }
 
-    if (!context->init(context->fGpu->refCaps(), nullptr)) {
+    if (!context->init(context->fGpu->refCaps())) {
         return nullptr;
     }
     return context;
 }
 #endif
 
+#ifdef SK_DAWN
+sk_sp<GrContext> GrContext::MakeDawn(const wgpu::Device& device) {
+    GrContextOptions defaultOptions;
+    return MakeDawn(device, defaultOptions);
+}
+
+sk_sp<GrContext> GrContext::MakeDawn(const wgpu::Device& device, const GrContextOptions& options) {
+    sk_sp<GrContext> context(new GrLegacyDirectContext(GrBackendApi::kDawn, options));
+
+    context->fGpu = GrDawnGpu::Make(device, options, context.get());
+    if (!context->fGpu) {
+        return nullptr;
+    }
+
+    if (!context->init(context->fGpu->refCaps())) {
+        return nullptr;
+    }
+    return context;
+}
+#endif

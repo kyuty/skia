@@ -8,7 +8,7 @@
 #ifndef SkSGGroup_DEFINED
 #define SkSGGroup_DEFINED
 
-#include "SkSGRenderNode.h"
+#include "modules/sksg/include/SkSGRenderNode.h"
 
 #include <vector>
 
@@ -39,6 +39,8 @@ protected:
     ~Group() override;
 
     void onRender(SkCanvas*, const RenderContext*) const override;
+    const RenderNode* onNodeAt(const SkPoint&)     const override;
+
     SkRect onRevalidate(InvalidationController*, const SkMatrix&) override;
 
 private:

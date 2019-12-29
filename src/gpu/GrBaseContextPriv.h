@@ -8,7 +8,7 @@
 #ifndef GrBaseContextPriv_DEFINED
 #define GrBaseContextPriv_DEFINED
 
-#include "GrContext_Base.h"
+#include "include/private/GrContext_Base.h"
 
 /** Class that exposes methods on GrContext_Base that are only intended for use internal to Skia.
     This class is purely a privileged window into GrContext_Base. It should never have
@@ -24,8 +24,6 @@ public:
 
     const GrCaps* caps() const { return fContext->caps(); }
     sk_sp<const GrCaps> refCaps() const;
-
-    sk_sp<GrSkSLFPFactoryCache> fpFactoryCache();
 
     GrImageContext* asImageContext() { return fContext->asImageContext(); }
     GrRecordingContext* asRecordingContext() { return fContext->asRecordingContext(); }

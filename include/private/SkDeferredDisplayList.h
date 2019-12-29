@@ -8,31 +8,36 @@
 #ifndef SkDeferredDisplayList_DEFINED
 #define SkDeferredDisplayList_DEFINED
 
-#include "SkSurfaceCharacterization.h"
-
-#if SK_SUPPORT_GPU
-#include "GrCCPerOpListPaths.h"
-#include "GrOpList.h"
-
-#include <map>
-#endif
+#include "include/core/SkRefCnt.h"
+#include "include/core/SkSurfaceCharacterization.h"
+#include "include/core/SkTypes.h"
 
 class SkDeferredDisplayListPriv;
-class SkSurface;
+
+#if SK_SUPPORT_GPU
+#include "include/private/GrRecordingContext.h"
+#include "include/private/SkTArray.h"
+#include <map>
+class GrOpMemoryPool;
+class GrRenderTask;
+class GrRenderTargetProxy;
+struct GrCCPerOpsTaskPaths;
+#endif
+
 /*
  * This class contains pre-processed gpu operations that can be replayed into
  * an SkSurface via draw(SkDeferredDisplayList*).
  *
  * TODO: we probably need to expose this class so users can query it for memory usage.
  */
-class SK_API SkDeferredDisplayList {
+class SkDeferredDisplayList {
 public:
 
 #if SK_SUPPORT_GPU
     // This object is the source from which the lazy proxy backing the DDL will pull its backing
     // texture when the DDL is replayed. It has to be separately ref counted bc the lazy proxy
     // can outlive the DDL.
-    class LazyProxyData : public SkRefCnt {
+    class SK_API LazyProxyData : public SkRefCnt {
     public:
         // Upon being replayed - this field will be filled in (by the DrawingManager) with the proxy
         // backing the destination SkSurface. Note that, since there is no good place to clear it
@@ -40,14 +45,14 @@ public:
         GrRenderTargetProxy*     fReplayDest = nullptr;
     };
 #else
-    class LazyProxyData : public SkRefCnt {};
+    class SK_API LazyProxyData : public SkRefCnt {};
 #endif
 
-    SkDeferredDisplayList(const SkSurfaceCharacterization& characterization,
-                          sk_sp<LazyProxyData>);
-    ~SkDeferredDisplayList();
+    SK_API SkDeferredDisplayList(const SkSurfaceCharacterization& characterization,
+                                 sk_sp<LazyProxyData>);
+    SK_API ~SkDeferredDisplayList();
 
-    const SkSurfaceCharacterization& characterization() const {
+    SK_API const SkSurfaceCharacterization& characterization() const {
         return fCharacterization;
     }
 
@@ -56,7 +61,15 @@ public:
     const SkDeferredDisplayListPriv priv() const;
 
 private:
-    friend class GrDrawingManager; // for access to 'fOpLists' and 'fLazyProxyData'
+#if SK_SUPPORT_GPU
+    // TODO: we should probably also store the GrProgramDescs - since we already have
+    // them
+    SK_API const SkTDArray<const GrProgramInfo*>& programInfos() const {
+        return fProgramInfos;
+    }
+#endif
+
+    friend class GrDrawingManager; // for access to 'fRenderTasks', 'fLazyProxyData', 'fArenas'
     friend class SkDeferredDisplayListRecorder; // for access to 'fLazyProxyData'
     friend class SkDeferredDisplayListPriv;
 
@@ -64,12 +77,19 @@ private:
 
 #if SK_SUPPORT_GPU
     // This needs to match the same type in GrCoverageCountingPathRenderer.h
-    using PendingPathsMap = std::map<uint32_t, sk_sp<GrCCPerOpListPaths>>;
+    using PendingPathsMap = std::map<uint32_t, sk_sp<GrCCPerOpsTaskPaths>>;
 
-    SkTArray<sk_sp<GrOpList>>    fOpLists;
-    PendingPathsMap              fPendingPaths;  // This is the path data from CCPR.
+    // These are ordered such that the destructor cleans op tasks up first (which may refer back
+    // to the arena and memory pool in their destructors).
+    GrRecordingContext::OwnedArenas fArenas;
+    PendingPathsMap                 fPendingPaths;  // This is the path data from CCPR.
+    SkTArray<sk_sp<GrRenderTask>>   fRenderTasks;
+
+    // The program infos should be stored in 'fRecordTimeData' so do not need to be ref counted
+    // or deleted in the destructor.
+    SkTDArray<const GrProgramInfo*> fProgramInfos;
 #endif
-    sk_sp<LazyProxyData>         fLazyProxyData;
+    sk_sp<LazyProxyData>            fLazyProxyData;
 };
 
 #endif

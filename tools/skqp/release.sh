@@ -31,7 +31,7 @@ cat > platform_tools/android/apps/skqp/src/main/Android.mk <<- "EOM"
 	LOCAL_MULTILIB := both
 	LOCAL_USE_AAPT2 := true
 	LOCAL_STATIC_ANDROID_LIBRARIES := android-support-design
-	LOCAL_STATIC_JAVA_LIBRARIES := ctstestrunner
+	LOCAL_STATIC_JAVA_LIBRARIES := ctstestrunner-axt
 	LOCAL_SRC_FILES := $(call all-java-files-under, java)
 	LOCAL_PACKAGE_NAME := CtsSkQPTestCases
 	LOCAL_SDK_VERSION := test_current
@@ -58,7 +58,10 @@ cat > platform_tools/android/apps/skqp/src/main/AndroidTest.xml <<- "EOM"
 	-->
 	<configuration description="Config for CTS SkQP test cases">
 	<option name="test-suite-tag" value="cts" />
+	<option name="not-shardable" value="true" />
 	<option name="config-descriptor:metadata" key="component" value="uitoolkit" />
+	<option name="config-descriptor:metadata" key="parameter" value="not_instant_app" />
+	<option name="config-descriptor:metadata" key="parameter" value="multi_abi" />
 	<target_preparer class="com.android.tradefed.targetprep.suite.SuiteApkInstaller">
 	<option name="cleanup-apks" value="true" />
 	<option name="test-file-name" value="CtsSkQPTestCases.apk" />

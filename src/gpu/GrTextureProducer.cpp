@@ -5,74 +5,70 @@
  * found in the LICENSE file.
  */
 
-#include "GrTextureProducer.h"
-#include "GrClip.h"
-#include "GrProxyProvider.h"
-#include "GrRenderTargetContext.h"
-#include "GrTextureProxy.h"
-#include "SkGr.h"
-#include "SkMipMap.h"
-#include "SkRectPriv.h"
-#include "effects/GrBicubicEffect.h"
-#include "effects/GrSimpleTextureEffect.h"
-#include "effects/GrTextureDomain.h"
+#include "include/private/GrRecordingContext.h"
+#include "src/core/SkMipMap.h"
+#include "src/core/SkRectPriv.h"
+#include "src/gpu/GrClip.h"
+#include "src/gpu/GrContextPriv.h"
+#include "src/gpu/GrProxyProvider.h"
+#include "src/gpu/GrRecordingContextPriv.h"
+#include "src/gpu/GrRenderTargetContext.h"
+#include "src/gpu/GrTextureProducer.h"
+#include "src/gpu/GrTextureProxy.h"
+#include "src/gpu/SkGr.h"
+#include "src/gpu/effects/GrBicubicEffect.h"
+#include "src/gpu/effects/GrSimpleTextureEffect.h"
+#include "src/gpu/effects/GrTextureDomain.h"
 
-sk_sp<GrTextureProxy> GrTextureProducer::CopyOnGpu(GrContext* context,
+sk_sp<GrTextureProxy> GrTextureProducer::CopyOnGpu(GrRecordingContext* context,
                                                    sk_sp<GrTextureProxy> inputProxy,
+                                                   GrColorType colorType,
                                                    const CopyParams& copyParams,
                                                    bool dstWillRequireMipMaps) {
     SkASSERT(context);
 
-    GrPixelConfig config = GrMakePixelConfigUncompressed(inputProxy->config());
-
-    const SkRect dstRect = SkRect::MakeIWH(copyParams.fWidth, copyParams.fHeight);
+    const SkRect dstRect = SkRect::Make(copyParams.fDimensions);
     GrMipMapped mipMapped = dstWillRequireMipMaps ? GrMipMapped::kYes : GrMipMapped::kNo;
 
-    SkRect localRect = SkRect::MakeWH(inputProxy->width(), inputProxy->height());
+    SkRect localRect = inputProxy->getBoundsRect();
 
     bool needsDomain = false;
     bool resizing = false;
     if (copyParams.fFilter != GrSamplerState::Filter::kNearest) {
         bool resizing = localRect.width()  != dstRect.width() ||
                         localRect.height() != dstRect.height();
-        needsDomain = resizing && !GrProxyProvider::IsFunctionallyExact(inputProxy.get());
+        needsDomain = resizing && inputProxy->isFunctionallyExact();
     }
 
     if (copyParams.fFilter == GrSamplerState::Filter::kNearest && !needsDomain && !resizing &&
         dstWillRequireMipMaps) {
-        sk_sp<GrTextureProxy> proxy = GrCopyBaseMipMapToTextureProxy(context, inputProxy.get());
+        sk_sp<GrTextureProxy> proxy = GrCopyBaseMipMapToTextureProxy(context, inputProxy.get(),
+                                                                     colorType);
         if (proxy) {
             return proxy;
         }
     }
 
-    GrBackendFormat format = inputProxy->backendFormat().makeTexture2D();
-    if (!format.isValid()) {
-        return nullptr;
-    }
-
-    sk_sp<GrRenderTargetContext> copyRTC =
-        context->priv().makeDeferredRenderTargetContextWithFallback(
-            format, SkBackingFit::kExact, dstRect.width(), dstRect.height(),
-            config, nullptr, 1, mipMapped, inputProxy->origin());
+    auto copyRTC = context->priv().makeDeferredRenderTargetContextWithFallback(
+            SkBackingFit::kExact, dstRect.width(), dstRect.height(), colorType, nullptr, 1,
+            mipMapped, inputProxy->origin());
     if (!copyRTC) {
         return nullptr;
     }
 
     GrPaint paint;
 
+    auto fp = GrSimpleTextureEffect::Make(std::move(inputProxy), kUnknown_SkAlphaType,
+                                          SkMatrix::I(), copyParams.fFilter);
     if (needsDomain) {
         const SkRect domain = localRect.makeInset(0.5f, 0.5f);
         // This would cause us to read values from outside the subset. Surely, the caller knows
         // better!
         SkASSERT(copyParams.fFilter != GrSamplerState::Filter::kMipMap);
-        paint.addColorFragmentProcessor(
-            GrTextureDomainEffect::Make(std::move(inputProxy), SkMatrix::I(), domain,
-                                        GrTextureDomain::kClamp_Mode, copyParams.fFilter));
-    } else {
-        GrSamplerState samplerState(GrSamplerState::WrapMode::kClamp, copyParams.fFilter);
-        paint.addColorTextureProcessor(std::move(inputProxy), SkMatrix::I(), samplerState);
+        fp = GrDomainEffect::Make(std::move(fp), domain, GrTextureDomain::kClamp_Mode,
+                                  copyParams.fFilter);
     }
+    paint.addColorFragmentProcessor(std::move(fp));
     paint.setPorterDuffXPFactory(SkBlendMode::kSrc);
 
     copyRTC->fillRectToRect(GrNoClip(), std::move(paint), GrAA::kNo, SkMatrix::I(), dstRect,
@@ -99,11 +95,11 @@ GrTextureProducer::DomainMode GrTextureProducer::DetermineDomainMode(
         GrTextureProxy* proxy,
         const GrSamplerState::Filter* filterModeOrNullForBicubic,
         SkRect* domainRect) {
-    const SkIRect proxyBounds = SkIRect::MakeWH(proxy->width(), proxy->height());
+    const SkIRect proxyBounds = SkIRect::MakeSize(proxy->dimensions());
 
     SkASSERT(proxyBounds.contains(constraintRect));
 
-    const bool proxyIsExact = GrProxyProvider::IsFunctionallyExact(proxy);
+    const bool proxyIsExact = proxy->isFunctionallyExact();
 
     // If the constraint rectangle contains the whole proxy then no need for a domain.
     if (constraintRect.contains(proxyBounds) && proxyIsExact) {
@@ -195,31 +191,64 @@ GrTextureProducer::DomainMode GrTextureProducer::DetermineDomainMode(
     return kDomain_DomainMode;
 }
 
-std::unique_ptr<GrFragmentProcessor> GrTextureProducer::CreateFragmentProcessorForDomainAndFilter(
+std::unique_ptr<GrFragmentProcessor> GrTextureProducer::createFragmentProcessorForDomainAndFilter(
         sk_sp<GrTextureProxy> proxy,
         const SkMatrix& textureMatrix,
         DomainMode domainMode,
         const SkRect& domain,
         const GrSamplerState::Filter* filterOrNullForBicubic) {
     SkASSERT(kTightCopy_DomainMode != domainMode);
+    bool clampToBorderSupport = fContext->priv().caps()->clampToBorderSupport();
+    SkAlphaType srcAlphaType = this->alphaType();
     if (filterOrNullForBicubic) {
-        if (kDomain_DomainMode == domainMode) {
-            return GrTextureDomainEffect::Make(std::move(proxy), textureMatrix, domain,
-                                               GrTextureDomain::kClamp_Mode,
-                                               *filterOrNullForBicubic);
-        } else {
-            GrSamplerState samplerState(GrSamplerState::WrapMode::kClamp, *filterOrNullForBicubic);
-            return GrSimpleTextureEffect::Make(std::move(proxy), textureMatrix, samplerState);
+        GrSamplerState::WrapMode wrapMode = fDomainNeedsDecal && clampToBorderSupport
+                                                    ? GrSamplerState::WrapMode::kClampToBorder
+                                                    : GrSamplerState::WrapMode::kClamp;
+        GrSamplerState samplerState(wrapMode, *filterOrNullForBicubic);
+        auto fp = GrSimpleTextureEffect::Make(std::move(proxy), srcAlphaType, textureMatrix,
+                                              samplerState);
+        if (kDomain_DomainMode == domainMode || (fDomainNeedsDecal && !clampToBorderSupport)) {
+            GrTextureDomain::Mode wrapMode = fDomainNeedsDecal ? GrTextureDomain::kDecal_Mode
+                                                               : GrTextureDomain::kClamp_Mode;
+            return GrDomainEffect::Make(std::move(fp), domain, wrapMode, *filterOrNullForBicubic);
         }
+        return fp;
     } else {
-        if (kDomain_DomainMode == domainMode) {
-            return GrBicubicEffect::Make(std::move(proxy), textureMatrix, domain);
+        static const GrSamplerState::WrapMode kClampClamp[] = {
+                GrSamplerState::WrapMode::kClamp, GrSamplerState::WrapMode::kClamp};
+        static const GrSamplerState::WrapMode kDecalDecal[] = {
+                GrSamplerState::WrapMode::kClampToBorder, GrSamplerState::WrapMode::kClampToBorder};
+
+        static constexpr auto kDir = GrBicubicEffect::Direction::kXY;
+        if (kDomain_DomainMode == domainMode || (fDomainNeedsDecal && !clampToBorderSupport)) {
+            GrTextureDomain::Mode wrapMode = fDomainNeedsDecal ? GrTextureDomain::kDecal_Mode
+                                         : GrTextureDomain::kClamp_Mode;
+            return GrBicubicEffect::Make(std::move(proxy), textureMatrix, kClampClamp, wrapMode,
+                                         wrapMode, kDir, srcAlphaType,
+                                         kDomain_DomainMode == domainMode ? &domain : nullptr);
         } else {
-            static const GrSamplerState::WrapMode kClampClamp[] = {
-                    GrSamplerState::WrapMode::kClamp, GrSamplerState::WrapMode::kClamp};
-            return GrBicubicEffect::Make(std::move(proxy), textureMatrix, kClampClamp);
+            return GrBicubicEffect::Make(std::move(proxy), textureMatrix,
+                                         fDomainNeedsDecal ? kDecalDecal : kClampClamp, kDir,
+                                         srcAlphaType);
         }
     }
+}
+
+sk_sp<GrTextureProxy> GrTextureProducer::refTextureProxyForParams(
+        const GrSamplerState::Filter* filterOrNullForBicubic,
+        SkScalar scaleAdjust[2]) {
+    GrSamplerState sampler; // Default is nearest + clamp
+    if (filterOrNullForBicubic) {
+        sampler.setFilterMode(*filterOrNullForBicubic);
+    }
+    if (fDomainNeedsDecal) {
+        // Assuming hardware support, switch to clamp-to-border instead of clamp
+        if (fContext->priv().caps()->clampToBorderSupport()) {
+            sampler.setWrapModeX(GrSamplerState::WrapMode::kClampToBorder);
+            sampler.setWrapModeY(GrSamplerState::WrapMode::kClampToBorder);
+        }
+    }
+    return this->refTextureProxyForParams(sampler, scaleAdjust);
 }
 
 sk_sp<GrTextureProxy> GrTextureProducer::refTextureProxyForParams(
@@ -235,19 +264,18 @@ sk_sp<GrTextureProxy> GrTextureProducer::refTextureProxyForParams(
 
     int mipCount = SkMipMap::ComputeLevelCount(this->width(), this->height());
     bool willBeMipped = GrSamplerState::Filter::kMipMap == sampler.filter() && mipCount &&
-                        fContext->priv().caps()->mipMapSupport();
+                        this->context()->priv().caps()->mipMapSupport();
 
     auto result = this->onRefTextureProxyForParams(sampler, willBeMipped, scaleAdjust);
 
     // Check to make sure that if we say the texture willBeMipped that the returned texture has mip
     // maps, unless the config is not copyable.
     SkASSERT(!result || !willBeMipped || result->mipMapped() == GrMipMapped::kYes ||
-             !fContext->priv().caps()->isConfigCopyable(result->config()));
+             !this->context()->priv().caps()->isFormatCopyable(result->backendFormat()));
 
     // Check that the "no scaling expected" case always returns a proxy of the same size as the
     // producer.
-    SkASSERT(!result || !expectNoScale ||
-             (result->width() == this->width() && result->height() == this->height()));
+    SkASSERT(!result || !expectNoScale || result->dimensions() == this->dimensions());
     return result;
 }
 
@@ -259,16 +287,16 @@ sk_sp<GrTextureProxy> GrTextureProducer::refTextureProxy(GrMipMapped willNeedMip
 
     int mipCount = SkMipMap::ComputeLevelCount(this->width(), this->height());
     bool willBeMipped = GrSamplerState::Filter::kMipMap == sampler.filter() && mipCount &&
-                        fContext->priv().caps()->mipMapSupport();
+                        this->context()->priv().caps()->mipMapSupport();
 
     auto result = this->onRefTextureProxyForParams(sampler, willBeMipped, nullptr);
 
     // Check to make sure that if we say the texture willBeMipped that the returned texture has mip
     // maps, unless the config is not copyable.
     SkASSERT(!result || !willBeMipped || result->mipMapped() == GrMipMapped::kYes ||
-             !fContext->priv().caps()->isConfigCopyable(result->config()));
+             !this->context()->priv().caps()->isFormatCopyable(result->backendFormat()));
 
     // Check that no scaling occured and we returned a proxy of the same size as the producer.
-    SkASSERT(!result || (result->width() == this->width() && result->height() == this->height()));
+    SkASSERT(!result || result->dimensions() == this->dimensions());
     return result;
 }

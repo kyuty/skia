@@ -5,20 +5,20 @@
  * found in the LICENSE file.
  */
 
-#include "SkBitmap.h"
-#include "SkCanvas.h"
-#include "SkColor.h"
-#include "SkFont.h"
-#include "SkFontDescriptor.h"
-#include "SkFontPriv.h"
-#include "SkGraphics.h"
-#include "SkPaint.h"
-#include "SkPoint.h"
-#include "SkRect.h"
-#include "SkStream.h"
-#include "SkTypeface.h"
-#include "SkTypes.h"
-#include "Test.h"
+#include "include/core/SkBitmap.h"
+#include "include/core/SkCanvas.h"
+#include "include/core/SkColor.h"
+#include "include/core/SkFont.h"
+#include "include/core/SkGraphics.h"
+#include "include/core/SkPaint.h"
+#include "include/core/SkPoint.h"
+#include "include/core/SkRect.h"
+#include "include/core/SkStream.h"
+#include "include/core/SkTypeface.h"
+#include "include/core/SkTypes.h"
+#include "src/core/SkFontDescriptor.h"
+#include "src/core/SkFontPriv.h"
+#include "tests/Test.h"
 
 static const SkColor bgColor = SK_ColorWHITE;
 
@@ -88,7 +88,7 @@ DEF_TEST(FontHostStream, reporter) {
 
         sk_sp<SkTypeface> typeface = font.refTypefaceOrDefault();
         int ttcIndex;
-        std::unique_ptr<SkStreamAsset> fontData(typeface->openStream(&ttcIndex));
+        std::unique_ptr<SkStreamAsset> fontData = typeface->openStream(&ttcIndex);
         if (!fontData) {
             // We're using a SkTypeface that can't give us a stream.
             // This happens with portable or system fonts.  End the test now.

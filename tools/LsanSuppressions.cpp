@@ -5,7 +5,7 @@
  * found in the LICENSE file.
  */
 
-#include "SkTypes.h"
+#include "include/core/SkTypes.h"
 
 #if !defined(__has_feature)
     #define __has_feature(x) 0
@@ -21,7 +21,6 @@ extern "C" {
                "leak:libGLX_nvidia.so\n"    // For NVidia driver.
                "leak:libnvidia-glcore.so\n" // For NVidia driver.
                "leak:libnvidia-tls.so\n"    // For NVidia driver.
-               "leak:libxcb.so\n"           // For Mesa Intel driver. skia:8710
                ;
     }
 

@@ -5,15 +5,15 @@
  * found in the LICENSE file.
  */
 
-#include "SkSLMetalCodeGenerator.h"
+#include "src/sksl/SkSLMetalCodeGenerator.h"
 
-#include "SkSLCompiler.h"
-#include "ir/SkSLExpressionStatement.h"
-#include "ir/SkSLExtension.h"
-#include "ir/SkSLIndexExpression.h"
-#include "ir/SkSLModifiersDeclaration.h"
-#include "ir/SkSLNop.h"
-#include "ir/SkSLVariableReference.h"
+#include "src/sksl/SkSLCompiler.h"
+#include "src/sksl/ir/SkSLExpressionStatement.h"
+#include "src/sksl/ir/SkSLExtension.h"
+#include "src/sksl/ir/SkSLIndexExpression.h"
+#include "src/sksl/ir/SkSLModifiersDeclaration.h"
+#include "src/sksl/ir/SkSLNop.h"
+#include "src/sksl/ir/SkSLVariableReference.h"
 
 #ifdef SK_MOLTENVK
     static const uint32_t MVKMagicNum = 0x19960412;
@@ -24,8 +24,10 @@ namespace SkSL {
 void MetalCodeGenerator::setupIntrinsics() {
 #define METAL(x) std::make_pair(kMetal_IntrinsicKind, k ## x ## _MetalIntrinsic)
 #define SPECIAL(x) std::make_pair(kSpecial_IntrinsicKind, k ## x ## _SpecialIntrinsic)
-    fIntrinsicMap[String("texture")]            = SPECIAL(Texture);
+    fIntrinsicMap[String("sample")]             = SPECIAL(Texture);
     fIntrinsicMap[String("mod")]                = SPECIAL(Mod);
+    fIntrinsicMap[String("equal")]              = METAL(Equal);
+    fIntrinsicMap[String("notEqual")]           = METAL(NotEqual);
     fIntrinsicMap[String("lessThan")]           = METAL(LessThan);
     fIntrinsicMap[String("lessThanEqual")]      = METAL(LessThanEqual);
     fIntrinsicMap[String("greaterThan")]        = METAL(GreaterThan);
@@ -172,6 +174,12 @@ void MetalCodeGenerator::writeIntrinsicCall(const FunctionCall& c) {
         case kMetal_IntrinsicKind:
             this->writeExpression(*c.fArguments[0], kSequence_Precedence);
             switch ((MetalIntrinsic) intrinsicId) {
+                case kEqual_MetalIntrinsic:
+                    this->write(" == ");
+                    break;
+                case kNotEqual_MetalIntrinsic:
+                    this->write(" != ");
+                    break;
                 case kLessThan_MetalIntrinsic:
                     this->write(" < ");
                     break;
@@ -210,7 +218,8 @@ void MetalCodeGenerator::writeFunctionCall(const FunctionCall& c) {
     } else if (c.fFunction.fBuiltin && "dFdx" == c.fFunction.fName) {
         this->write("dfdx");
     } else if (c.fFunction.fBuiltin && "dFdy" == c.fFunction.fName) {
-        this->write("dfdy");
+        // Flipping Y also negates the Y derivatives.
+        this->write((fProgram.fSettings.fFlipY) ? "-dfdy" : "dfdy");
     } else {
         this->writeName(c.fFunction.fName);
     }
@@ -235,6 +244,11 @@ void MetalCodeGenerator::writeFunctionCall(const FunctionCall& c) {
         this->write("_globals");
         separator = ", ";
     }
+    if (this->requirements(c.fFunction) & kFragCoord_Requirement) {
+        this->write(separator);
+        this->write("_fragCoord");
+        separator = ", ";
+    }
     for (size_t i = 0; i < c.fArguments.size(); ++i) {
         const Expression& arg = *c.fArguments[i];
         this->write(separator);
@@ -248,14 +262,78 @@ void MetalCodeGenerator::writeFunctionCall(const FunctionCall& c) {
 }
 
 void MetalCodeGenerator::writeInverseHack(const Expression& mat) {
-    String name = "ERROR_MatrixInverseNotImplementedFor_" + mat.fType.name();
-    if (mat.fType == *fContext.fFloat2x2_Type) {
-        name = "_inverse2";
+    String typeName = mat.fType.name();
+    String name = typeName + "_inverse";
+    if (mat.fType == *fContext.fFloat2x2_Type || mat.fType == *fContext.fHalf2x2_Type) {
         if (fWrittenIntrinsics.find(name) == fWrittenIntrinsics.end()) {
             fWrittenIntrinsics.insert(name);
             fExtraFunctions.writeText((
-                "float2x2 " + name + "(float2x2 m) {"
+                typeName + " " + name + "(" + typeName + " m) {"
                 "    return float2x2(m[1][1], -m[0][1], -m[1][0], m[0][0]) * (1/determinant(m));"
+                "}"
+            ).c_str());
+        }
+    }
+    else if (mat.fType == *fContext.fFloat3x3_Type || mat.fType == *fContext.fHalf3x3_Type) {
+        if (fWrittenIntrinsics.find(name) == fWrittenIntrinsics.end()) {
+            fWrittenIntrinsics.insert(name);
+            fExtraFunctions.writeText((
+                typeName + " " +  name + "(" + typeName + " m) {"
+                "    float a00 = m[0][0], a01 = m[0][1], a02 = m[0][2];"
+                "    float a10 = m[1][0], a11 = m[1][1], a12 = m[1][2];"
+                "    float a20 = m[2][0], a21 = m[2][1], a22 = m[2][2];"
+                "    float b01 = a22 * a11 - a12 * a21;"
+                "    float b11 = -a22 * a10 + a12 * a20;"
+                "    float b21 = a21 * a10 - a11 * a20;"
+                "    float det = a00 * b01 + a01 * b11 + a02 * b21;"
+                "    return " + typeName +
+                "                   (b01, (-a22 * a01 + a02 * a21), (a12 * a01 - a02 * a11),"
+                "                    b11, (a22 * a00 - a02 * a20), (-a12 * a00 + a02 * a10),"
+                "                    b21, (-a21 * a00 + a01 * a20), (a11 * a00 - a01 * a10)) * "
+                "                   (1/det);"
+                "}"
+            ).c_str());
+        }
+    }
+    else if (mat.fType == *fContext.fFloat4x4_Type || mat.fType == *fContext.fHalf4x4_Type) {
+        if (fWrittenIntrinsics.find(name) == fWrittenIntrinsics.end()) {
+            fWrittenIntrinsics.insert(name);
+            fExtraFunctions.writeText((
+                typeName + " " +  name + "(" + typeName + " m) {"
+                "    float a00 = m[0][0], a01 = m[0][1], a02 = m[0][2], a03 = m[0][3];"
+                "    float a10 = m[1][0], a11 = m[1][1], a12 = m[1][2], a13 = m[1][3];"
+                "    float a20 = m[2][0], a21 = m[2][1], a22 = m[2][2], a23 = m[2][3];"
+                "    float a30 = m[3][0], a31 = m[3][1], a32 = m[3][2], a33 = m[3][3];"
+                "    float b00 = a00 * a11 - a01 * a10;"
+                "    float b01 = a00 * a12 - a02 * a10;"
+                "    float b02 = a00 * a13 - a03 * a10;"
+                "    float b03 = a01 * a12 - a02 * a11;"
+                "    float b04 = a01 * a13 - a03 * a11;"
+                "    float b05 = a02 * a13 - a03 * a12;"
+                "    float b06 = a20 * a31 - a21 * a30;"
+                "    float b07 = a20 * a32 - a22 * a30;"
+                "    float b08 = a20 * a33 - a23 * a30;"
+                "    float b09 = a21 * a32 - a22 * a31;"
+                "    float b10 = a21 * a33 - a23 * a31;"
+                "    float b11 = a22 * a33 - a23 * a32;"
+                "    float det = b00 * b11 - b01 * b10 + b02 * b09 + b03 * b08 - "
+                "                b04 * b07 + b05 * b06;"
+                "    return " + typeName + "(a11 * b11 - a12 * b10 + a13 * b09,"
+                "                            a02 * b10 - a01 * b11 - a03 * b09,"
+                "                            a31 * b05 - a32 * b04 + a33 * b03,"
+                "                            a22 * b04 - a21 * b05 - a23 * b03,"
+                "                            a12 * b08 - a10 * b11 - a13 * b07,"
+                "                            a00 * b11 - a02 * b08 + a03 * b07,"
+                "                            a32 * b02 - a30 * b05 - a33 * b01,"
+                "                            a20 * b05 - a22 * b02 + a23 * b01,"
+                "                            a10 * b10 - a11 * b08 + a13 * b06,"
+                "                            a01 * b08 - a00 * b10 - a03 * b06,"
+                "                            a30 * b04 - a31 * b02 + a33 * b00,"
+                "                            a21 * b02 - a20 * b04 - a23 * b00,"
+                "                            a11 * b07 - a10 * b09 - a12 * b06,"
+                "                            a00 * b09 - a01 * b07 + a02 * b06,"
+                "                            a31 * b01 - a30 * b03 - a32 * b00,"
+                "                            a20 * b03 - a21 * b01 + a22 * b00) / det;"
                 "}"
             ).c_str());
         }
@@ -300,8 +378,8 @@ void MetalCodeGenerator::writeSpecialIntrinsic(const FunctionCall & c, SpecialIn
 // of type 'arg'.
 String MetalCodeGenerator::getMatrixConstructHelper(const Type& matrix, const Type& arg) {
     String key = matrix.name() + arg.name();
-    auto found = fMatrixConstructHelpers.find(key);
-    if (found != fMatrixConstructHelpers.end()) {
+    auto found = fHelpers.find(key);
+    if (found != fHelpers.end()) {
         return found->second;
     }
     String name;
@@ -331,8 +409,34 @@ String MetalCodeGenerator::getMatrixConstructHelper(const Type& matrix, const Ty
             fExtraFunctions.writeText(")");
         }
         fExtraFunctions.writeText(");\n}\n");
-    }
-    else if (matrix.rows() == 2 && matrix.columns() == 2) {
+    } else if (arg.kind() == Type::kMatrix_Kind) {
+        // creating a matrix from another matrix
+        int argColumns = arg.columns();
+        int argRows = arg.rows();
+        name = "float" + to_string(columns) + "x" + to_string(rows) + "_from_float" +
+               to_string(argColumns) + "x" + to_string(argRows);
+        fExtraFunctions.printf("float%dx%d %s(float%dx%d m) {\n",
+                               columns, rows, name.c_str(), argColumns, argRows);
+        fExtraFunctions.printf("    return float%dx%d(", columns, rows);
+        for (int i = 0; i < columns; ++i) {
+            if (i > 0) {
+                fExtraFunctions.writeText(", ");
+            }
+            fExtraFunctions.printf("float%d(", rows);
+            for (int j = 0; j < rows; ++j) {
+                if (j > 0) {
+                    fExtraFunctions.writeText(", ");
+                }
+                if (i < argColumns && j < argRows) {
+                    fExtraFunctions.printf("m[%d][%d]", i, j);
+                } else {
+                    fExtraFunctions.writeText("0");
+                }
+            }
+            fExtraFunctions.writeText(")");
+        }
+        fExtraFunctions.writeText(");\n}\n");
+    } else if (matrix.rows() == 2 && matrix.columns() == 2 && arg == *fContext.fFloat4_Type) {
         // float2x2(float4) doesn't work, need to split it into float2x2(float2, float2)
         name = "float2x2_from_float4";
         fExtraFunctions.printf(
@@ -341,12 +445,11 @@ String MetalCodeGenerator::getMatrixConstructHelper(const Type& matrix, const Ty
             "}\n",
             name.c_str()
         );
-    }
-    else {
+    } else {
         SkASSERT(false);
         name = "<error>";
     }
-    fMatrixConstructHelpers[key] = name;
+    fHelpers[key] = name;
     return name;
 }
 
@@ -380,15 +483,14 @@ void MetalCodeGenerator::writeConstructor(const Constructor& c, Precedence paren
         for (const auto& arg : c.fArguments) {
             this->write(separator);
             separator = ", ";
-            if (Type::kMatrix_Kind == c.fType.kind() && Type::kScalar_Kind == arg->fType.kind()) {
-                // float2x2(float, float, float, float) doesn't work in Metal 1, so we need to merge
-                // to float2x2(float2, float2).
+            if (Type::kMatrix_Kind == c.fType.kind() && arg->fType.columns() != c.fType.rows()) {
+                // merge scalars and smaller vectors together
                 if (!scalarCount) {
                     this->writeType(c.fType.componentType());
                     this->write(to_string(c.fType.rows()));
                     this->write("(");
                 }
-                ++scalarCount;
+                scalarCount += arg->fType.columns();
             }
             this->writeExpression(*arg, kSequence_Precedence);
             if (scalarCount && scalarCount == c.fType.rows()) {
@@ -401,9 +503,10 @@ void MetalCodeGenerator::writeConstructor(const Constructor& c, Precedence paren
 }
 
 void MetalCodeGenerator::writeFragCoord() {
-    if (fProgram.fInputs.fRTHeight) {
-        this->write("float4(_fragCoord.x, _anonInterface0.u_skRTHeight - _fragCoord.y, 0.0, "
-                    "_fragCoord.w)");
+    if (fRTHeightName.length()) {
+        this->write("float4(_fragCoord.x, ");
+        this->write(fRTHeightName.c_str());
+        this->write(" - _fragCoord.y, 0.0, _fragCoord.w)");
     } else {
         this->write("float4(_fragCoord.x, _fragCoord.y, 0.0, _fragCoord.w)");
     }
@@ -480,10 +583,23 @@ void MetalCodeGenerator::writeFieldAccess(const FieldAccess& f) {
 }
 
 void MetalCodeGenerator::writeSwizzle(const Swizzle& swizzle) {
+    int last = swizzle.fComponents.back();
+    if (last == SKSL_SWIZZLE_0 || last == SKSL_SWIZZLE_1) {
+        this->writeType(swizzle.fType);
+        this->write("(");
+    }
     this->writeExpression(*swizzle.fBase, kPostfix_Precedence);
     this->write(".");
     for (int c : swizzle.fComponents) {
-        this->write(&("x\0y\0z\0w\0"[c * 2]));
+        if (c >= 0) {
+            this->write(&("x\0y\0z\0w\0"[c * 2]));
+        }
+    }
+    if (last == SKSL_SWIZZLE_0) {
+        this->write(", 0)");
+    }
+    else if (last == SKSL_SWIZZLE_1) {
+        this->write(", 1)");
     }
 }
 
@@ -527,10 +643,39 @@ MetalCodeGenerator::Precedence MetalCodeGenerator::GetBinaryPrecedence(Token::Ki
     }
 }
 
+void MetalCodeGenerator::writeMatrixTimesEqualHelper(const Type& left, const Type& right,
+                                                     const Type& result) {
+    String key = "TimesEqual" + left.name() + right.name();
+    if (fHelpers.find(key) == fHelpers.end()) {
+        fExtraFunctions.printf("%s operator*=(thread %s& left, thread const %s& right) {\n"
+                               "    left = left * right;\n"
+                               "    return left;\n"
+                               "}", result.name().c_str(), left.name().c_str(),
+                                    right.name().c_str());
+    }
+}
+
 void MetalCodeGenerator::writeBinaryExpression(const BinaryExpression& b,
                                                Precedence parentPrecedence) {
     Precedence precedence = GetBinaryPrecedence(b.fOperator);
-    if (precedence >= parentPrecedence) {
+    bool needParens = precedence >= parentPrecedence;
+    switch (b.fOperator) {
+        case Token::EQEQ:
+            if (b.fLeft->fType.kind() == Type::kVector_Kind) {
+                this->write("all");
+                needParens = true;
+            }
+            break;
+        case Token::NEQ:
+            if (b.fLeft->fType.kind() == Type::kVector_Kind) {
+                this->write("any");
+                needParens = true;
+            }
+            break;
+        default:
+            break;
+    }
+    if (needParens) {
         this->write("(");
     }
     if (Compiler::IsAssignment(b.fOperator) &&
@@ -540,6 +685,10 @@ void MetalCodeGenerator::writeBinaryExpression(const BinaryExpression& b,
         // writing to an out parameter. Since we have to turn those into pointers, we have to
         // dereference it here.
         this->write("*");
+    }
+    if (b.fOperator == Token::STAREQ && b.fLeft->fType.kind() == Type::kMatrix_Kind &&
+        b.fRight->fType.kind() == Type::kMatrix_Kind) {
+        this->writeMatrixTimesEqualHelper(b.fLeft->fType, b.fRight->fType, b.fType);
     }
     this->writeExpression(*b.fLeft, precedence);
     if (b.fOperator != Token::EQ && Compiler::IsAssignment(b.fOperator) &&
@@ -561,7 +710,7 @@ void MetalCodeGenerator::writeBinaryExpression(const BinaryExpression& b,
         this->write(String(" ") + Compiler::OperatorName(b.fOperator) + " ");
     }
     this->writeExpression(*b.fRight, precedence);
-    if (precedence >= parentPrecedence) {
+    if (needParens) {
         this->write(")");
     }
 }
@@ -626,6 +775,7 @@ void MetalCodeGenerator::writeSetting(const Setting& s) {
 }
 
 void MetalCodeGenerator::writeFunction(const FunctionDefinition& f) {
+    fRTHeightName = fProgram.fInputs.fRTHeight ? "_globals->_anonInterface0->u_skRTHeight" : "";
     const char* separator = "";
     if ("main" == f.fDeclaration.fName) {
         switch (fProgram.fKind) {
@@ -698,6 +848,7 @@ void MetalCodeGenerator::writeFunction(const FunctionDefinition& f) {
 #else
                 this->write(", constant sksl_synthetic_uniforms& _anonInterface0 [[buffer(1)]]");
 #endif
+                fRTHeightName = "_anonInterface0.u_skRTHeight";
             }
             this->write(", bool _frontFacing [[front_facing]]");
             this->write(", float4 _fragCoord [[position]]");
@@ -710,23 +861,29 @@ void MetalCodeGenerator::writeFunction(const FunctionDefinition& f) {
         this->write(" ");
         this->writeName(f.fDeclaration.fName);
         this->write("(");
-        if (this->requirements(f.fDeclaration) & kInputs_Requirement) {
+        Requirements requirements = this->requirements(f.fDeclaration);
+        if (requirements & kInputs_Requirement) {
             this->write("Inputs _in");
             separator = ", ";
         }
-        if (this->requirements(f.fDeclaration) & kOutputs_Requirement) {
+        if (requirements & kOutputs_Requirement) {
             this->write(separator);
             this->write("thread Outputs* _out");
             separator = ", ";
         }
-        if (this->requirements(f.fDeclaration) & kUniforms_Requirement) {
+        if (requirements & kUniforms_Requirement) {
             this->write(separator);
             this->write("Uniforms _uniforms");
             separator = ", ";
         }
-        if (this->requirements(f.fDeclaration) & kGlobals_Requirement) {
+        if (requirements & kGlobals_Requirement) {
             this->write(separator);
             this->write("thread Globals* _globals");
+            separator = ", ";
+        }
+        if (requirements & kFragCoord_Requirement) {
+            this->write(separator);
+            this->write("float4 _fragCoord");
             separator = ", ";
         }
     }
@@ -760,37 +917,31 @@ void MetalCodeGenerator::writeFunction(const FunctionDefinition& f) {
 
     if ("main" == f.fDeclaration.fName) {
         if (fNeedsGlobalStructInit) {
-            this->writeLine("    Globals globalStruct;");
-            this->writeLine("    thread Globals* _globals = &globalStruct;");
+            this->writeLine("    Globals globalStruct{");
+            const char* separator = "";
             for (const auto& intf: fInterfaceBlockNameMap) {
                 const auto& intfName = intf.second;
-                this->write("    _globals->");
+                this->write(separator);
+                separator = ", ";
+                this->write("&");
                 this->writeName(intfName);
-                this->write(" = &");
-                this->writeName(intfName);
-                this->write(";\n");
             }
             for (const auto& var: fInitNonConstGlobalVars) {
-                this->write("    _globals->");
-                this->writeName(var->fVar->fName);
-                this->write(" = ");
+                this->write(separator);
+                separator = ", ";
                 this->writeVarInitializer(*var->fVar, *var->fValue);
-                this->writeLine(";");
             }
             for (const auto& texture: fTextures) {
-                this->write("    _globals->");
+                this->write(separator);
+                separator = ", ";
                 this->writeName(texture->fName);
-                this->write(" = ");
-                this->writeName(texture->fName);
-                this->write(";\n");
-                this->write("    _globals->");
+                this->write(separator);
                 this->writeName(texture->fName);
                 this->write(SAMPLER_SUFFIX);
-                this->write(" = ");
-                this->writeName(texture->fName);
-                this->write(SAMPLER_SUFFIX);
-                this->write(";\n");
             }
+            this->writeLine("};");
+            this->writeLine("    thread Globals* _globals = &globalStruct;");
+            this->writeLine("    (void)_globals;");
         }
         this->writeLine("    Outputs _outputStruct;");
         this->writeLine("    thread Outputs* _out = &_outputStruct;");
@@ -976,14 +1127,6 @@ void MetalCodeGenerator::writeVarDeclarations(const VarDeclarations& decl, bool 
         if (var.fValue) {
             this->write(" = ");
             this->writeVarInitializer(*var.fVar, *var.fValue);
-        }
-        if (!fFoundImageDecl && var.fVar->fType == *fContext.fImage2D_Type) {
-            if (fProgram.fSettings.fCaps->imageLoadStoreExtensionString()) {
-                fHeader.writeText("#extension ");
-                fHeader.writeText(fProgram.fSettings.fCaps->imageLoadStoreExtensionString());
-                fHeader.writeText(" : require\n");
-            }
-            fFoundImageDecl = true;
         }
     }
     if (wroteType) {
@@ -1408,7 +1551,7 @@ MetalCodeGenerator::Requirements MetalCodeGenerator::requirements(const Expressi
             const VariableReference& v = (const VariableReference&) e;
             Requirements result = kNo_Requirements;
             if (v.fVariable.fModifiers.fLayout.fBuiltin == SK_FRAGCOORD_BUILTIN) {
-                result = kInputs_Requirement;
+                result = kGlobals_Requirement | kFragCoord_Requirement;
             } else if (Variable::kGlobal_Storage == v.fVariable.fStorage) {
                 if (v.fVariable.fModifiers.fFlags & Modifiers::kIn_Flag) {
                     result = kInputs_Requirement;
@@ -1466,7 +1609,7 @@ MetalCodeGenerator::Requirements MetalCodeGenerator::requirements(const Statemen
             const IfStatement& i = (const IfStatement&) s;
             return this->requirements(*i.fTest) |
                    this->requirements(*i.fIfTrue) |
-                   (i.fIfFalse && this->requirements(*i.fIfFalse));
+                   (i.fIfFalse ? this->requirements(*i.fIfFalse) : 0);
         }
         case Statement::kFor_Kind: {
             const ForStatement& f = (const ForStatement&) s;
@@ -1506,6 +1649,7 @@ MetalCodeGenerator::Requirements MetalCodeGenerator::requirements(const Function
     }
     auto found = fRequirements.find(&f);
     if (found == fRequirements.end()) {
+        fRequirements[&f] = kNo_Requirements;
         for (const auto& e : fProgram) {
             if (ProgramElement::kFunction_Kind == e.fKind) {
                 const FunctionDefinition& def = (const FunctionDefinition&) e;

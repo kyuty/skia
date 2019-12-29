@@ -5,13 +5,13 @@
  * found in the LICENSE file.
  */
 
-#include "SkTypes.h"
+#include "include/core/SkTypes.h"
 
-#include "Benchmark.h"
-#include "GrMemoryPool.h"
-#include "SkRandom.h"
-#include "SkTDArray.h"
-#include "SkTemplates.h"
+#include "bench/Benchmark.h"
+#include "include/private/SkTDArray.h"
+#include "include/private/SkTemplates.h"
+#include "include/utils/SkRandom.h"
+#include "src/gpu/GrMemoryPool.h"
 
 #include <new>
 
@@ -21,12 +21,16 @@
 struct A {
     int gStuff[10];
 #if OVERRIDE_NEW
-    void* operator new (size_t size) { return gBenchPool.allocate(size); }
-    void operator delete (void* mem) { if (mem) { return gBenchPool.release(mem); } }
+    void* operator new(size_t size) { return gBenchPool->allocate(size); }
+    void operator delete(void* mem) {
+        if (mem) {
+            return gBenchPool->release(mem);
+        }
+    }
 #endif
-    static GrMemoryPool gBenchPool;
+    static std::unique_ptr<GrMemoryPool> gBenchPool;
 };
-GrMemoryPool A::gBenchPool(10 * (1 << 10), 10 * (1 << 10));
+std::unique_ptr<GrMemoryPool> A::gBenchPool = GrMemoryPool::Make(10 * (1 << 10), 10 * (1 << 10));
 
 /**
  * This benchmark creates and deletes objects in stack order
@@ -83,12 +87,16 @@ private:
 struct B {
     int gStuff[10];
 #if OVERRIDE_NEW
-    void* operator new (size_t size) { return gBenchPool.allocate(size); }
-    void operator delete (void* mem) { if (mem) { return gBenchPool.release(mem); } }
+    void* operator new(size_t size) { return gBenchPool->allocate(size); }
+    void operator delete(void* mem) {
+        if (mem) {
+            return gBenchPool->release(mem);
+        }
+    }
 #endif
-    static GrMemoryPool gBenchPool;
+    static std::unique_ptr<GrMemoryPool> gBenchPool;
 };
-GrMemoryPool B::gBenchPool(10 * (1 << 10), 10 * (1 << 10));
+std::unique_ptr<GrMemoryPool> B::gBenchPool = GrMemoryPool::Make(10 * (1 << 10), 10 * (1 << 10));
 
 /**
  * This benchmark creates objects and deletes them in random order
@@ -128,12 +136,16 @@ private:
 struct C {
     int gStuff[10];
 #if OVERRIDE_NEW
-    void* operator new (size_t size) { return gBenchPool.allocate(size); }
-    void operator delete (void* mem) { if (mem) { return gBenchPool.release(mem); } }
+    void* operator new(size_t size) { return gBenchPool->allocate(size); }
+    void operator delete(void* mem) {
+        if (mem) {
+            return gBenchPool->release(mem);
+        }
+    }
 #endif
-    static GrMemoryPool gBenchPool;
+    static std::unique_ptr<GrMemoryPool> gBenchPool;
 };
-GrMemoryPool C::gBenchPool(10 * (1 << 10), 10 * (1 << 10));
+std::unique_ptr<GrMemoryPool> C::gBenchPool = GrMemoryPool::Make(10 * (1 << 10), 10 * (1 << 10));
 
 /**
  * This benchmark creates objects and deletes them in queue order

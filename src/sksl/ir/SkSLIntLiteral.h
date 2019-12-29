@@ -8,8 +8,8 @@
 #ifndef SKSL_INTLITERAL
 #define SKSL_INTLITERAL
 
-#include "SkSLContext.h"
-#include "SkSLExpression.h"
+#include "src/sksl/SkSLContext.h"
+#include "src/sksl/ir/SkSLExpression.h"
 
 namespace SkSL {
 
@@ -45,7 +45,8 @@ struct IntLiteral : public Expression {
     }
 
     int coercionCost(const Type& target) const override {
-        if (target.isSigned() || target.isUnsigned() || target.isFloat()) {
+        if (target.isSigned() || target.isUnsigned() || target.isFloat() ||
+            target.kind() == Type::kEnum_Kind) {
             return 0;
         }
         return INHERITED::coercionCost(target);

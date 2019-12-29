@@ -5,14 +5,14 @@
  * found in the LICENSE file.
  */
 
-#include "SkCanvas.h"
-#include "SkData.h"
-#include "SkImageGenerator.h"
-#include "SkPDFDocument.h"
-#include "SkStream.h"
+#include "include/core/SkCanvas.h"
+#include "include/core/SkData.h"
+#include "include/core/SkImageGenerator.h"
+#include "include/core/SkStream.h"
+#include "include/docs/SkPDFDocument.h"
 
-#include "Resources.h"
-#include "Test.h"
+#include "tests/Test.h"
+#include "tools/Resources.h"
 
 static bool is_subset_of(SkData* smaller, SkData* larger) {
     SkASSERT(smaller && larger);
@@ -65,7 +65,6 @@ DEF_TEST(SkPDF_JpegEmbedTest, r) {
     sk_sp<SkImage> im2(SkImage::MakeFromEncoded(cmykData));
     canvas->drawImage(im2.get(), 0.0, 512.0, nullptr);
 
-    canvas->flush();
     document->endPage();
     document->close();
     sk_sp<SkData> pdfData = pdf.detachAsData();
@@ -82,7 +81,7 @@ DEF_TEST(SkPDF_JpegEmbedTest, r) {
 
 #ifdef SK_SUPPORT_PDF
 
-#include "SkJpegInfo.h"
+#include "src/pdf/SkJpegInfo.h"
 
 struct SkJFIFInfo {
     SkISize fSize;

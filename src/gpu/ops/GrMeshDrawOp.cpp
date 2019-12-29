@@ -5,33 +5,30 @@
  * found in the LICENSE file.
  */
 
-#include "GrGpuCommandBuffer.h"
-#include "GrMeshDrawOp.h"
-#include "GrOpFlushState.h"
-#include "GrResourceProvider.h"
+#include "src/gpu/ops/GrMeshDrawOp.h"
+
+#include "src/gpu/GrOpFlushState.h"
+#include "src/gpu/GrOpsRenderPass.h"
+#include "src/gpu/GrResourceProvider.h"
 
 GrMeshDrawOp::GrMeshDrawOp(uint32_t classID) : INHERITED(classID) {}
 
 void GrMeshDrawOp::onPrepare(GrOpFlushState* state) { this->onPrepareDraws(state); }
-
-void GrMeshDrawOp::onExecute(GrOpFlushState* state, const SkRect& chainBounds) {
-    state->executeDrawsAndUploadsForMeshDrawOp(this, chainBounds);
-}
 
 //////////////////////////////////////////////////////////////////////////////
 
 GrMeshDrawOp::PatternHelper::PatternHelper(Target* target, GrPrimitiveType primitiveType,
                                            size_t vertexStride, sk_sp<const GrBuffer> indexBuffer,
                                            int verticesPerRepetition, int indicesPerRepetition,
-                                           int repeatCount) {
+                                           int repeatCount, int maxRepetitions) {
     this->init(target, primitiveType, vertexStride, std::move(indexBuffer), verticesPerRepetition,
-               indicesPerRepetition, repeatCount);
+               indicesPerRepetition, repeatCount, maxRepetitions);
 }
 
 void GrMeshDrawOp::PatternHelper::init(Target* target, GrPrimitiveType primitiveType,
                                        size_t vertexStride, sk_sp<const GrBuffer> indexBuffer,
                                        int verticesPerRepetition, int indicesPerRepetition,
-                                       int repeatCount) {
+                                       int repeatCount, int maxRepetitions) {
     SkASSERT(target);
     if (!indexBuffer) {
         return;
@@ -45,73 +42,77 @@ void GrMeshDrawOp::PatternHelper::init(Target* target, GrPrimitiveType primitive
         return;
     }
     SkASSERT(vertexBuffer);
-    size_t ibSize = indexBuffer->size();
-    int maxRepetitions = static_cast<int>(ibSize / (sizeof(uint16_t) * indicesPerRepetition));
     fMesh = target->allocMesh(primitiveType);
+    fPrimitiveType = primitiveType;
+
+    SkASSERT(maxRepetitions ==
+             static_cast<int>(indexBuffer->size() / (sizeof(uint16_t) * indicesPerRepetition)));
     fMesh->setIndexedPatterned(std::move(indexBuffer), indicesPerRepetition, verticesPerRepetition,
                                repeatCount, maxRepetitions);
     fMesh->setVertexData(std::move(vertexBuffer), firstVertex);
 }
 
+void GrMeshDrawOp::PatternHelper::recordDraw(Target* target, const GrGeometryProcessor* gp) const {
+    target->recordDraw(gp, fMesh, 1, fPrimitiveType);
+}
+
 void GrMeshDrawOp::PatternHelper::recordDraw(
-        Target* target, sk_sp<const GrGeometryProcessor> gp, const GrPipeline* pipeline,
+        Target* target, const GrGeometryProcessor* gp,
         const GrPipeline::FixedDynamicState* fixedDynamicState) const {
-    target->draw(std::move(gp), pipeline, fixedDynamicState, fMesh);
+    target->recordDraw(gp, fMesh, 1, fixedDynamicState, nullptr, fPrimitiveType);
 }
 
 //////////////////////////////////////////////////////////////////////////////
 
 GrMeshDrawOp::QuadHelper::QuadHelper(Target* target, size_t vertexStride, int quadsToDraw) {
-    sk_sp<const GrGpuBuffer> quadIndexBuffer = target->resourceProvider()->refQuadIndexBuffer();
-    if (!quadIndexBuffer) {
+    sk_sp<const GrGpuBuffer> indexBuffer = target->resourceProvider()->refNonAAQuadIndexBuffer();
+    if (!indexBuffer) {
         SkDebugf("Could not get quad index buffer.");
         return;
     }
-    this->init(target, GrPrimitiveType::kTriangles, vertexStride, std::move(quadIndexBuffer),
-               kVerticesPerQuad, kIndicesPerQuad, quadsToDraw);
+    this->init(target, GrPrimitiveType::kTriangles, vertexStride, std::move(indexBuffer),
+               GrResourceProvider::NumVertsPerNonAAQuad(),
+               GrResourceProvider::NumIndicesPerNonAAQuad(), quadsToDraw,
+               GrResourceProvider::MaxNumNonAAQuads());
 }
 
 //////////////////////////////////////////////////////////////////////////////
 
-GrPipeline::FixedDynamicState* GrMeshDrawOp::Target::allocFixedDynamicState(
-        const SkIRect& rect, int numPrimitiveProcessorTextures) {
-    auto result = this->pipelineArena()->make<GrPipeline::FixedDynamicState>(rect);
-    if (numPrimitiveProcessorTextures) {
-        result->fPrimitiveProcessorTextures =
-                this->allocPrimitiveProcessorTextureArray(numPrimitiveProcessorTextures);
-    }
-    return result;
-}
+GrPipeline::DynamicStateArrays* GrMeshDrawOp::Target::AllocDynamicStateArrays(
+        SkArenaAlloc* arena, int numMeshes, int numPrimitiveProcessorTextures,
+        bool allocScissors) {
 
-GrPipeline::DynamicStateArrays* GrMeshDrawOp::Target::allocDynamicStateArrays(
-        int numMeshes, int numPrimitiveProcessorTextures, bool allocScissors) {
-    auto result = this->pipelineArena()->make<GrPipeline::DynamicStateArrays>();
+    auto result = arena->make<GrPipeline::DynamicStateArrays>();
+
     if (allocScissors) {
-        result->fScissorRects = this->pipelineArena()->makeArray<SkIRect>(numMeshes);
+        result->fScissorRects = arena->makeArray<SkIRect>(numMeshes);
     }
+
     if (numPrimitiveProcessorTextures) {
-        result->fPrimitiveProcessorTextures = this->allocPrimitiveProcessorTextureArray(
-                numPrimitiveProcessorTextures * numMeshes);
+        result->fPrimitiveProcessorTextures = arena->makeArrayDefault<GrSurfaceProxy*>(
+                        numPrimitiveProcessorTextures * numMeshes);
     }
+
     return result;
 }
 
-GrMeshDrawOp::Target::PipelineAndFixedDynamicState GrMeshDrawOp::Target::makePipeline(
-        uint32_t pipelineFlags, GrProcessorSet&& processorSet, GrAppliedClip&& clip,
-        int numPrimProcTextures) {
-    GrPipeline::InitArgs pipelineArgs;
-    pipelineArgs.fFlags = pipelineFlags;
-    pipelineArgs.fDstProxy = this->dstProxy();
-    pipelineArgs.fCaps = &this->caps();
-    pipelineArgs.fResourceProvider = this->resourceProvider();
-    GrPipeline::FixedDynamicState* fixedDynamicState = nullptr;
-    if (clip.scissorState().enabled() || numPrimProcTextures) {
-        fixedDynamicState = this->allocFixedDynamicState(clip.scissorState().rect());
-        if (numPrimProcTextures) {
-            fixedDynamicState->fPrimitiveProcessorTextures =
-                    this->allocPrimitiveProcessorTextureArray(numPrimProcTextures);
+GrPipeline::FixedDynamicState* GrMeshDrawOp::Target::MakeFixedDynamicState(
+        SkArenaAlloc* arena, const GrAppliedClip* clip, int numPrimProcTextures) {
+
+    bool haveScissor = clip && clip->scissorState().enabled();
+
+    if (haveScissor || numPrimProcTextures) {
+        auto result = arena->make<GrPipeline::FixedDynamicState>();
+
+        if (haveScissor) {
+            result->fScissorRect = clip->scissorState().rect();
         }
+
+        if (numPrimProcTextures) {
+            result->fPrimitiveProcessorTextures = arena->makeArrayDefault<GrSurfaceProxy*>(
+                        numPrimProcTextures);
+        }
+        return result;
     }
-    return {this->allocPipeline(pipelineArgs, std::move(processorSet), std::move(clip)),
-            fixedDynamicState};
+    return nullptr;
 }

@@ -8,16 +8,19 @@
 #ifndef DMSrcSink_DEFINED
 #define DMSrcSink_DEFINED
 
-#include "SkBBHFactory.h"
-#include "SkBBoxHierarchy.h"
-#include "SkBitmap.h"
-#include "SkBitmapRegionDecoder.h"
-#include "SkCanvas.h"
-#include "SkCommonFlagsConfig.h"
-#include "SkData.h"
-#include "SkMultiPictureDocument.h"
-#include "SkPicture.h"
-#include "gm.h"
+#include "gm/gm.h"
+#include "include/android/SkBitmapRegionDecoder.h"
+#include "include/core/SkBBHFactory.h"
+#include "include/core/SkBitmap.h"
+#include "include/core/SkCanvas.h"
+#include "include/core/SkData.h"
+#include "include/core/SkPicture.h"
+#include "src/core/SkBBoxHierarchy.h"
+#include "src/utils/SkMultiPictureDocument.h"
+#include "tools/flags/CommonFlagsConfig.h"
+#include "tools/gpu/MemoryCache.h"
+
+#include <functional>
 
 //#define TEST_VIA_SVG
 
@@ -212,29 +215,15 @@ private:
 
 class ColorCodecSrc : public Src {
 public:
-    enum Mode {
-        // Mimic legacy behavior and apply no color correction.
-        kBaseline_Mode,
-
-        // Color correct images into a specific dst color space.  If you happen to have this
-        // monitor, you're in luck!  The unmarked outputs of this test should display
-        // correctly on this monitor in the Chrome browser.  If not, it's useful to know
-        // that this monitor has a profile that is fairly similar to Adobe RGB.
-        kDst_HPZR30w_Mode,
-
-        kDst_sRGB_Mode,
-    };
-
-    ColorCodecSrc(Path, Mode, SkColorType);
+    ColorCodecSrc(Path, bool decode_to_dst);
 
     Error draw(SkCanvas*) const override;
     SkISize size() const override;
     Name name() const override;
     bool veto(SinkFlags) const override;
 private:
-    Path                    fPath;
-    Mode                    fMode;
-    SkColorType             fColorType;
+    Path fPath;
+    bool fDecodeToDst;
 };
 
 class SKPSrc : public Src {
@@ -341,15 +330,12 @@ public:
 
 class GPUSink : public Sink {
 public:
-    GPUSink(sk_gpu_test::GrContextFactory::ContextType,
-            sk_gpu_test::GrContextFactory::ContextOverrides,
-            SkCommandLineConfigGpu::SurfType surfType, int samples, bool diText,
-            SkColorType colorType, SkAlphaType alphaType, sk_sp<SkColorSpace> colorSpace,
-            bool threaded, const GrContextOptions& grCtxOptions);
+    GPUSink(const SkCommandLineConfigGpu*, const GrContextOptions&);
 
     Error draw(const Src&, SkBitmap*, SkWStream*, SkString*) const override;
     Error onDraw(const Src&, SkBitmap*, SkWStream*, SkString*,
-                 const GrContextOptions& baseOptions) const;
+                 const GrContextOptions& baseOptions,
+                 std::function<void(GrContext*)> initContext = nullptr) const;
 
     sk_gpu_test::GrContextFactory::ContextType contextType() const { return fContextType; }
     const sk_gpu_test::GrContextFactory::ContextOverrides& contextOverrides() {
@@ -357,7 +343,7 @@ public:
     }
     SkCommandLineConfigGpu::SurfType surfType() const { return fSurfType; }
     bool useDIText() const { return fUseDIText; }
-    bool serial() const override { return !fThreaded; }
+    bool serial() const override { return true; }
     const char* fileExtension() const override { return "png"; }
     SinkFlags flags() const override {
         SinkFlags::Multisampled ms = fSampleCount > 1 ? SinkFlags::kMultisampled
@@ -375,18 +361,13 @@ private:
     SkColorType                                       fColorType;
     SkAlphaType                                       fAlphaType;
     sk_sp<SkColorSpace>                               fColorSpace;
-    bool                                              fThreaded;
     GrContextOptions                                  fBaseContextOptions;
+    sk_gpu_test::MemoryCache                          fMemoryCache;
 };
 
 class GPUThreadTestingSink : public GPUSink {
 public:
-    GPUThreadTestingSink(sk_gpu_test::GrContextFactory::ContextType,
-                         sk_gpu_test::GrContextFactory::ContextOverrides,
-                         SkCommandLineConfigGpu::SurfType surfType, int samples, bool diText,
-                         SkColorType colorType, SkAlphaType alphaType,
-                         sk_sp<SkColorSpace> colorSpace, bool threaded,
-                         const GrContextOptions& grCtxOptions);
+    GPUThreadTestingSink(const SkCommandLineConfigGpu*, const GrContextOptions&);
 
     Error draw(const Src&, SkBitmap*, SkWStream*, SkString*) const override;
 
@@ -403,12 +384,24 @@ private:
 
 class GPUPersistentCacheTestingSink : public GPUSink {
 public:
-    GPUPersistentCacheTestingSink(sk_gpu_test::GrContextFactory::ContextType,
-                                  sk_gpu_test::GrContextFactory::ContextOverrides,
-                                  SkCommandLineConfigGpu::SurfType surfType, int samples,
-                                  bool diText, SkColorType colorType, SkAlphaType alphaType,
-                                  sk_sp<SkColorSpace> colorSpace, bool threaded,
-                                  const GrContextOptions& grCtxOptions);
+    GPUPersistentCacheTestingSink(const SkCommandLineConfigGpu*, const GrContextOptions&);
+
+    Error draw(const Src&, SkBitmap*, SkWStream*, SkString*) const override;
+
+    const char* fileExtension() const override {
+        // Suppress writing out results from this config - we just want to do our matching test
+        return nullptr;
+    }
+
+private:
+    int fCacheType;
+
+    typedef GPUSink INHERITED;
+};
+
+class GPUPrecompileTestingSink : public GPUSink {
+public:
+    GPUPrecompileTestingSink(const SkCommandLineConfigGpu*, const GrContextOptions&);
 
     Error draw(const Src&, SkBitmap*, SkWStream*, SkString*) const override;
 
@@ -532,15 +525,6 @@ public:
     Error draw(const Src&, SkBitmap*, SkWStream*, SkString*) const override;
 };
 
-class ViaTiles : public Via {
-public:
-    ViaTiles(int w, int h, SkBBHFactory*, Sink*);
-    Error draw(const Src&, SkBitmap*, SkWStream*, SkString*) const override;
-private:
-    const int                   fW, fH;
-    std::unique_ptr<SkBBHFactory> fFactory;
-};
-
 class ViaDDL : public Via {
 public:
     ViaDDL(int numReplays, int numDivisions, Sink* sink);
@@ -554,21 +538,6 @@ class ViaSVG : public Via {
 public:
     explicit ViaSVG(Sink* sink) : Via(sink) {}
     Error draw(const Src&, SkBitmap*, SkWStream*, SkString*) const override;
-};
-
-class ViaLite : public Via {
-public:
-    explicit ViaLite(Sink* sink) : Via(sink) {}
-    Error draw(const Src&, SkBitmap*, SkWStream*, SkString*) const override;
-};
-
-class ViaCSXform : public Via {
-public:
-    explicit ViaCSXform(Sink*, sk_sp<SkColorSpace>, bool colorSpin);
-    Error draw(const Src&, SkBitmap*, SkWStream*, SkString*) const override;
-private:
-    sk_sp<SkColorSpace> fCS;
-    bool                fColorSpin;
 };
 
 }  // namespace DM

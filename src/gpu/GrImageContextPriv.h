@@ -8,7 +8,7 @@
 #ifndef GrImageContextPriv_DEFINED
 #define GrImageContextPriv_DEFINED
 
-#include "GrImageContext.h"
+#include "include/private/GrImageContext.h"
 
 /** Class that exposes methods on GrImageContext that are only intended for use internal to Skia.
     This class is purely a privileged window into GrImageContext. It should never have
@@ -25,8 +25,6 @@ public:
     const GrCaps* caps() const { return fContext->caps(); }
     sk_sp<const GrCaps> refCaps() const;
 
-    sk_sp<GrSkSLFPFactoryCache> fpFactoryCache();
-
     GrImageContext* asImageContext() { return fContext->asImageContext(); }
     GrRecordingContext* asRecordingContext() { return fContext->asRecordingContext(); }
     GrContext* asDirectContext() { return fContext->asDirectContext(); }
@@ -34,6 +32,8 @@ public:
     // from GrImageContext
     GrProxyProvider* proxyProvider() { return fContext->proxyProvider(); }
     const GrProxyProvider* proxyProvider() const { return fContext->proxyProvider(); }
+
+    bool abandoned() const { return fContext->abandoned(); }
 
     /** This is only useful for debug purposes */
     SkDEBUGCODE(GrSingleOwner* singleOwner() const { return fContext->singleOwner(); } )

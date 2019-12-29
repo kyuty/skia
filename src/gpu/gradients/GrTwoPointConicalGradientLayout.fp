@@ -125,8 +125,8 @@ void main() {
 //////////////////////////////////////////////////////////////////////////////
 
 @header {
-    #include "SkTwoPointConicalGradient.h"
-    #include "GrGradientShader.h"
+    #include "src/gpu/gradients/GrGradientShader.h"
+    #include "src/shaders/gradients/SkTwoPointConicalGradient.h"
 }
 
 // The 2 point conical gradient can reject a pixel so it does change opacity
@@ -297,6 +297,6 @@ void main() {
     GrTest::TestAsFPArgs asFPArgs(d);
     std::unique_ptr<GrFragmentProcessor> fp = as_SB(shader)->asFragmentProcessor(asFPArgs.args());
 
-    GrAlwaysAssert(fp);
+    SkASSERT_RELEASE(fp);
     return fp;
 }

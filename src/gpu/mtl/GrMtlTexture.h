@@ -8,7 +8,7 @@
 #ifndef GrMtlTexture_DEFINED
 #define GrMtlTexture_DEFINED
 
-#include "GrTexture.h"
+#include "include/gpu/GrTexture.h"
 
 #import <Metal/Metal.h>
 
@@ -16,10 +16,10 @@ class GrMtlGpu;
 
 class GrMtlTexture : public GrTexture {
 public:
-    static sk_sp<GrMtlTexture> CreateNewTexture(GrMtlGpu*, SkBudgeted budgeted,
-                                                const GrSurfaceDesc&,
-                                                MTLTextureDescriptor*,
-                                                GrMipMapsStatus);
+    static sk_sp<GrMtlTexture> MakeNewTexture(GrMtlGpu*, SkBudgeted budgeted,
+                                              const GrSurfaceDesc&,
+                                              MTLTextureDescriptor*,
+                                              GrMipMapsStatus);
 
     static sk_sp<GrMtlTexture> MakeWrappedTexture(GrMtlGpu*, const GrSurfaceDesc&, id<MTLTexture>,
                                                   GrWrapCacheable, GrIOType);
@@ -35,12 +35,6 @@ public:
     void textureParamsModified() override {}
 
     bool reallocForMipmap(GrMtlGpu* gpu, uint32_t mipLevels);
-
-    void setIdleProc(IdleProc proc, void* context) override {
-        fIdleProc = proc;
-        fIdleProcContext = context;
-    }
-    void* idleContext() const override { return fIdleProcContext; }
 
 protected:
     GrMtlTexture(GrMtlGpu*, const GrSurfaceDesc&, id<MTLTexture>, GrMipMapsStatus);
@@ -63,19 +57,6 @@ protected:
 private:
     enum Wrapped { kWrapped };
 
-    // Since all MTLResources are inherently ref counted, we can call the Release proc when we
-    // delete the GrMtlTexture without worry of the MTLTexture getting deleted before it is done on
-    // the GPU. Thus we do nothing special here with the releaseHelper.
-    void onSetRelease(sk_sp<GrReleaseProcHelper> releaseHelper) override {}
-
-    void removedLastRefOrPendingIO() override {
-        if (fIdleProc) {
-            fIdleProc(fIdleProcContext);
-            fIdleProc = nullptr;
-            fIdleProcContext = nullptr;
-        }
-    }
-
     GrMtlTexture(GrMtlGpu*, SkBudgeted, const GrSurfaceDesc&, id<MTLTexture>,
                  GrMipMapsStatus);
 
@@ -83,9 +64,6 @@ private:
                  GrWrapCacheable, GrIOType);
 
     id<MTLTexture> fTexture;
-    sk_sp<GrReleaseProcHelper> fReleaseHelper;
-    IdleProc* fIdleProc = nullptr;
-    void* fIdleProcContext = nullptr;
 
     typedef GrTexture INHERITED;
 };

@@ -3,11 +3,15 @@
 #ifndef SkPDFDocument_DEFINED
 #define SkPDFDocument_DEFINED
 
-#include "SkDocument.h"
+#include "include/core/SkDocument.h"
 
-#include "SkScalar.h"
-#include "SkString.h"
-#include "SkTime.h"
+#include "include/core/SkMilestone.h"
+#include "include/core/SkScalar.h"
+#include "include/core/SkString.h"
+#include "include/core/SkTime.h"
+
+#define SKPDF_STRING(X) SKPDF_STRING_IMPL(X)
+#define SKPDF_STRING_IMPL(X) #X
 
 class SkExecutor;
 
@@ -106,9 +110,8 @@ struct Metadata {
     SkString fCreator;
 
     /** The product that is converting this document to PDF.
-        Leave fProducer empty to get the default, correct value.
     */
-    SkString fProducer;
+    SkString fProducer = SkString("Skia/PDF m" SKPDF_STRING(SK_MILESTONE));
 
     /** The date and time the document was created.
         The zero default value represents an unknown/unset time.
@@ -159,6 +162,17 @@ struct Metadata {
         Experimental.
     */
     SkExecutor* fExecutor = nullptr;
+
+    /** Preferred Subsetter. Only respected if both are compiled in.
+
+        The Sfntly subsetter is deprecated.
+
+        Experimental.
+    */
+    enum Subsetter {
+        kHarfbuzz_Subsetter,
+        kSfntly_Subsetter,
+    } fSubsetter = kHarfbuzz_Subsetter;
 };
 
 /** Associate a node ID with subsequent drawing commands in an
@@ -191,4 +205,7 @@ static inline sk_sp<SkDocument> MakeDocument(SkWStream* stream) {
 }
 
 }  // namespace SkPDF
+
+#undef SKPDF_STRING
+#undef SKPDF_STRING_IMPL
 #endif  // SkPDFDocument_DEFINED

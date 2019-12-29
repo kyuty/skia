@@ -8,10 +8,11 @@
 #ifndef GrMeshDrawOp_DEFINED
 #define GrMeshDrawOp_DEFINED
 
-#include "GrAppliedClip.h"
-#include "GrDrawOp.h"
-#include "GrGeometryProcessor.h"
-#include "GrMesh.h"
+#include "src/core/SkArenaAlloc.h"
+#include "src/gpu/GrAppliedClip.h"
+#include "src/gpu/GrGeometryProcessor.h"
+#include "src/gpu/GrMesh.h"
+#include "src/gpu/ops/GrDrawOp.h"
 #include <type_traits>
 
 class GrAtlasManager;
@@ -27,6 +28,11 @@ public:
     /** Abstract interface that represents a destination for a GrMeshDrawOp. */
     class Target;
 
+    static bool CanUpgradeAAOnMerge(GrAAType aa1, GrAAType aa2) {
+        return (aa1 == GrAAType::kNone && aa2 == GrAAType::kCoverage) ||
+               (aa1 == GrAAType::kCoverage && aa2 == GrAAType::kNone);
+    }
+
 protected:
     GrMeshDrawOp(uint32_t classID);
 
@@ -36,10 +42,11 @@ protected:
     public:
         PatternHelper(Target*, GrPrimitiveType, size_t vertexStride,
                       sk_sp<const GrBuffer> indexBuffer, int verticesPerRepetition,
-                      int indicesPerRepetition, int repeatCount);
+                      int indicesPerRepetition, int repeatCount, int maxRepetitions);
 
         /** Called to issue draws to the GrMeshDrawOp::Target.*/
-        void recordDraw(Target*, sk_sp<const GrGeometryProcessor>, const GrPipeline*,
+        void recordDraw(Target*, const GrGeometryProcessor*) const;
+        void recordDraw(Target*, const GrGeometryProcessor*,
                         const GrPipeline::FixedDynamicState*) const;
 
         void* vertices() const { return fVertices; }
@@ -47,17 +54,18 @@ protected:
     protected:
         PatternHelper() = default;
         void init(Target*, GrPrimitiveType, size_t vertexStride, sk_sp<const GrBuffer> indexBuffer,
-                  int verticesPerRepetition, int indicesPerRepetition, int repeatCount);
+                  int verticesPerRepetition, int indicesPerRepetition, int repeatCount,
+                  int maxRepetitions);
 
     private:
         void* fVertices = nullptr;
         GrMesh* fMesh = nullptr;
+        GrPrimitiveType fPrimitiveType;
     };
 
-    static const int kVerticesPerQuad = 4;
-    static const int kIndicesPerQuad = 6;
-
-    /** A specialization of InstanceHelper for quad rendering. */
+    /** A specialization of InstanceHelper for quad rendering.
+     *  It only draws non-antialiased indexed quads.
+     */
     class QuadHelper : private PatternHelper {
     public:
         QuadHelper() = delete;
@@ -70,9 +78,30 @@ protected:
         typedef PatternHelper INHERITED;
     };
 
+    static bool CombinedQuadCountWillOverflow(GrAAType aaType,
+                                              bool willBeUpgradedToAA,
+                                              int combinedQuadCount) {
+        bool willBeAA = (aaType == GrAAType::kCoverage) || willBeUpgradedToAA;
+
+        return combinedQuadCount > (willBeAA ? GrResourceProvider::MaxNumAAQuads()
+                                             : GrResourceProvider::MaxNumNonAAQuads());
+    }
+
 private:
+    void onPrePrepare(GrRecordingContext* context,
+                      const GrSurfaceProxyView* dstView,
+                      GrAppliedClip* clip,
+                      const GrXferProcessor::DstProxyView& dstProxyView) final {
+        this->onPrePrepareDraws(context, dstView, clip, dstProxyView);
+    }
     void onPrepare(GrOpFlushState* state) final;
-    void onExecute(GrOpFlushState* state, const SkRect& chainBounds) final;
+
+    // Only the GrTextureOp currently overrides this virtual
+    virtual void onPrePrepareDraws(GrRecordingContext*,
+                                   const GrSurfaceProxyView*,
+                                   GrAppliedClip*,
+                                   const GrXferProcessor::DstProxyView&) {}
+
     virtual void onPrepareDraws(Target*) = 0;
     typedef GrDrawOp INHERITED;
 };
@@ -82,18 +111,20 @@ public:
     virtual ~Target() {}
 
     /** Adds a draw of a mesh. */
-    virtual void draw(sk_sp<const GrGeometryProcessor>,
-                      const GrPipeline*,
-                      const GrPipeline::FixedDynamicState*,
-                      const GrPipeline::DynamicStateArrays*,
-                      const GrMesh[],
-                      int meshCount) = 0;
-    /** Helper for drawing a single GrMesh. */
-    void draw(sk_sp<const GrGeometryProcessor> gp,
-              const GrPipeline* pipeline,
-              const GrPipeline::FixedDynamicState* fixedDynamicState,
-              const GrMesh* mesh) {
-        this->draw(std::move(gp), pipeline, fixedDynamicState, nullptr, mesh, 1);
+    virtual void recordDraw(
+            const GrGeometryProcessor*, const GrMesh[], int meshCnt,
+            const GrPipeline::FixedDynamicState*, const GrPipeline::DynamicStateArrays*,
+            GrPrimitiveType) = 0;
+
+    /**
+     * Helper for drawing GrMesh(es) with zero primProc textures and no dynamic state besides the
+     * scissor clip.
+     */
+    void recordDraw(const GrGeometryProcessor* gp, const GrMesh meshes[], int meshCnt,
+                    GrPrimitiveType primitiveType) {
+        static constexpr int kZeroPrimProcTextures = 0;
+        auto fixedDynamicState = this->makeFixedDynamicState(kZeroPrimProcTextures);
+        this->recordDraw(gp, meshes, meshCnt, fixedDynamicState, nullptr, primitiveType);
     }
 
     /**
@@ -135,58 +166,33 @@ public:
     virtual void putBackIndices(int indices) = 0;
     virtual void putBackVertices(int vertices, size_t vertexStride) = 0;
 
-    /**
-     * Allocate space for a pipeline. The target ensures this pipeline lifetime is at least
-     * as long as any deferred execution of draws added via draw().
-     * @tparam Args
-     * @param args
-     * @return
-     */
-    template <typename... Args>
-    GrPipeline* allocPipeline(Args&&... args) {
-        return this->pipelineArena()->make<GrPipeline>(std::forward<Args>(args)...);
-    }
-
     GrMesh* allocMesh(GrPrimitiveType primitiveType) {
-        return this->pipelineArena()->make<GrMesh>(primitiveType);
+        return this->allocator()->make<GrMesh>(primitiveType);
     }
 
-    GrMesh* allocMeshes(int n) { return this->pipelineArena()->makeArray<GrMesh>(n); }
+    GrMesh* allocMeshes(int n) { return this->allocator()->makeArray<GrMesh>(n); }
 
-    GrPipeline::FixedDynamicState* allocFixedDynamicState(const SkIRect& rect,
-                                                          int numPrimitiveProcessorTextures = 0);
+    static GrPipeline::DynamicStateArrays* AllocDynamicStateArrays(SkArenaAlloc*,
+                                                                   int numMeshes,
+                                                                   int numPrimitiveProcTextures,
+                                                                   bool allocScissors);
 
-    GrPipeline::DynamicStateArrays* allocDynamicStateArrays(int numMeshes,
-                                                            int numPrimitiveProcessorTextures,
-                                                            bool allocScissors);
+    static GrPipeline::FixedDynamicState* MakeFixedDynamicState(SkArenaAlloc*,
+                                                                const GrAppliedClip* clip,
+                                                                int numPrimitiveProcessorTextures);
 
-    GrTextureProxy** allocPrimitiveProcessorTextureArray(int n) {
-        SkASSERT(n > 0);
-        return this->pipelineArena()->makeArrayDefault<GrTextureProxy*>(n);
+
+    GrPipeline::FixedDynamicState* makeFixedDynamicState(int numPrimitiveProcessorTextures) {
+        return MakeFixedDynamicState(this->allocator(), this->appliedClip(),
+                                     numPrimitiveProcessorTextures);
     }
-
-    // Once we have C++17 structured bindings make this just be a tuple because then we can do:
-    //      auto [pipeline, fixedDynamicState] = target->makePipeline(...);
-    // in addition to:
-    //      std::tie(flushInfo.fPipeline, flushInfo.fFixedState) = target->makePipeline(...);
-    struct PipelineAndFixedDynamicState {
-        const GrPipeline* fPipeline;
-        GrPipeline::FixedDynamicState* fFixedDynamicState;
-    };
-
-    /**
-     * Helper that makes a pipeline targeting the op's render target that incorporates the op's
-     * GrAppliedClip and uses a fixed dynamic state.
-     */
-    PipelineAndFixedDynamicState makePipeline(uint32_t pipelineFlags, GrProcessorSet&&,
-                                              GrAppliedClip&&,
-                                              int numPrimitiveProcessorTextures = 0);
 
     virtual GrRenderTargetProxy* proxy() const = 0;
 
+    virtual const GrAppliedClip* appliedClip() const = 0;
     virtual GrAppliedClip detachAppliedClip() = 0;
 
-    virtual const GrXferProcessor::DstProxy& dstProxy() const = 0;
+    virtual const GrXferProcessor::DstProxyView& dstProxyView() const = 0;
 
     virtual GrResourceProvider* resourceProvider() const = 0;
     uint32_t contextUniqueID() const { return this->resourceProvider()->contextUniqueID(); }
@@ -194,12 +200,16 @@ public:
     virtual GrStrikeCache* glyphCache() const = 0;
     virtual GrAtlasManager* atlasManager() const = 0;
 
+    // This should be called during onPrepare of a GrOp. The caller should add any proxies to the
+    // array it will use that it did not access during a call to visitProxies. This is usually the
+    // case for atlases.
+    virtual SkTArray<GrSurfaceProxy*, true>* sampledProxyArray() = 0;
+
     virtual const GrCaps& caps() const = 0;
 
     virtual GrDeferredUploadTarget* deferredUploadTarget() = 0;
 
-private:
-    virtual SkArenaAlloc* pipelineArena() = 0;
+    virtual SkArenaAlloc* allocator() = 0;
 };
 
 #endif
