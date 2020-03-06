@@ -32,6 +32,7 @@
     #endif
 
     static uint32_t read_cpu_features() {
+        //printf("read cpu feature. cpu is x86\n");
         uint32_t features = 0;
         uint32_t abcd[4] = {0,0,0,0};
 
@@ -126,5 +127,10 @@ uint32_t SkCpu::gCachedFeatures = 0;
 
 void SkCpu::CacheRuntimeFeatures() {
     static SkOnce once;
-    once([] { gCachedFeatures = read_cpu_features(); });
+    once(
+        [] {
+            //printf("call read_cpu_features\n");
+            gCachedFeatures = read_cpu_features();
+        }
+    );
 }

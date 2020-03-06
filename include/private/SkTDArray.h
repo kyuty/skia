@@ -16,6 +16,7 @@
 #include <initializer_list>
 #include <utility>
 
+// TODO: wangdong read TDArray data structure
 template <typename T> class SkTDArray {
 public:
     SkTDArray() : fArray(nullptr), fReserve(0), fCount(0) {}

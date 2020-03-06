@@ -340,6 +340,7 @@ bool SkBitmapDevice::onReadPixels(const SkPixmap& pm, int x, int y) {
 ///////////////////////////////////////////////////////////////////////////////
 
 void SkBitmapDevice::drawPaint(const SkPaint& paint) {
+    printf("SkBitmapDevice drawPaint\n");
     BDDraw(this).drawPaint(paint);
 }
 

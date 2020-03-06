@@ -1043,6 +1043,9 @@ public:
     /** Fills clip with color color.
         mode determines how ARGB is combined with destination.
 
+        填充color.
+        mode表示填充的color(源颜色)如何与目标颜色做混合
+
         @param color  unpremultiplied ARGB
         @param mode   SkBlendMode used to combine source color and destination
     */
@@ -1051,7 +1054,11 @@ public:
     /** Fills clip with color color using SkBlendMode::kSrc.
         This has the effect of replacing all pixels contained by clip with color.
 
+        使用kSrc的方式填充颜色.
+        效果是使用指定的颜色替换所以的像素点.
+
         @param color  unpremultiplied ARGB
+                      没有被预乘的颜色值，格式为ARGB
     */
     void clear(SkColor color) {
         this->drawColor(color, SkBlendMode::kSrc);

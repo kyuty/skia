@@ -19,10 +19,12 @@ void finishWindow(sk_app::Window_unix* win) {
     win->finishPaint();
 }
 
+// unix skia程序的入口
 int main(int argc, char**argv) {
     XInitThreads();
     Display* display = XOpenDisplay(nullptr);
 
+    // 应用程序的入口
     Application* app = Application::Create(argc, argv, (void*)display);
 
     // Get the file descriptor for the X display
@@ -42,14 +44,14 @@ int main(int argc, char**argv) {
         tv.tv_usec = 100;
         tv.tv_sec = 0;
 
-        while (!XPending(display)) {
+        while (!XPending(display)) { // 这里会不停等待，直到display pending
             // Wait for an event on the file descriptor or for timer expiration
             (void) select(count, &in_fds, nullptr, nullptr, &tv);
         }
 
         // Handle XEvents (if any) and flush the input
         int count = XPending(display);
-        while (count-- && !done) {
+        while (count-- && !done) { // 这里来处理XEvent(input)事件
             XEvent event;
             XNextEvent(display, &event);
 
@@ -60,11 +62,11 @@ int main(int argc, char**argv) {
 
             // paint and resize events get collapsed
             switch (event.type) {
-            case Expose:
-                win->markPendingPaint();
+            case Expose: // show
+                win->markPendingPaint(); // init pending paint with Window_unix
                 pendingWindows.add(win);
                 break;
-            case ConfigureNotify:
+            case ConfigureNotify: // resize
                 win->markPendingResize(event.xconfigurerequest.width,
                                        event.xconfigurerequest.height);
                 pendingWindows.add(win);
@@ -77,7 +79,9 @@ int main(int argc, char**argv) {
             }
         }
 
-        pendingWindows.foreach(finishWindow);
+        //printf("main foreach finishWindow");
+        // 这里是调用render的地方，外面的while循环会不停地调到这里
+        pendingWindows.foreach(finishWindow); // TODO: wangdong read SkTHash.h
         if (pendingWindows.count() > 0) {
             app->onIdle();
         }

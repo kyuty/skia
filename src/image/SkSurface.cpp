@@ -92,6 +92,7 @@ bool SkSurface_Base::outstandingImageSnapshot() const {
 }
 
 void SkSurface_Base::aboutToDraw(ContentChangeMode mode) {
+    printf("SkSurface_Base aboutToDraw\n");
     this->dirtyGenerationID();
 
     SkASSERT(!fCachedCanvas || fCachedCanvas->getSurfaceBase() == this);

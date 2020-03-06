@@ -21,12 +21,12 @@
 #include "SkTypes.h"
 
 enum class SkBlendMode {
-    kClear,                           //!< replaces destination with zero: fully transparent
-    kSrc,                             //!< replaces destination
-    kDst,                             //!< preserves destination
-    kSrcOver,                         //!< source over destination
-    kDstOver,                         //!< destination over source
-    kSrcIn,                           //!< source trimmed inside destination
+    kClear,                           //!< replaces destination with zero: fully transparent         填充0，即透明
+    kSrc,                             //!< replaces destination                                      只保留源颜色
+    kDst,                             //!< preserves destination                                     只保留目标颜色
+    kSrcOver,                         //!< source over destination                                   源颜色覆盖在目标颜色上
+    kDstOver,                         //!< destination over source                                   目标颜色覆盖在源颜色上
+    kSrcIn,                           //!< source trimmed inside destination                         TODO: wangdong
     kDstIn,                           //!< destination trimmed by source
     kSrcOut,                          //!< source trimmed outside destination
     kDstOut,                          //!< destination trimmed outside source

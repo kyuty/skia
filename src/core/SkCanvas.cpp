@@ -157,6 +157,7 @@ void SkCanvas::predrawNotify(bool willOverwritesEntireSurface) {
 
 void SkCanvas::predrawNotify(const SkRect* rect, const SkPaint* paint,
                              ShaderOverrideOpacity overrideOpacity) {
+    printf("SkCanvas predrawNotify\n");
     if (fSurfaceBase) {
         SkSurface::ContentChangeMode mode = SkSurface::kRetain_ContentChangeMode;
         // Since willOverwriteAllPixels() may not be complete free to call, we only do so if
@@ -364,6 +365,7 @@ public:
     // If null, the clip will be used instead.
     AutoDrawLooper(SkCanvas* canvas, const SkPaint& paint, bool skipLayerForImageFilter = false,
                    const SkRect* rawBounds = nullptr) : fOrigPaint(paint) {
+        printf("AutoDrawLooper. init");
         fCanvas = canvas;
         fPaint = &fOrigPaint;
         fSaveCount = canvas->getSaveCount();
@@ -511,7 +513,8 @@ bool AutoDrawLooper::doNext() {
     this->predrawNotify(bounds, &paint, auxOpaque);                 \
     AutoDrawLooper  looper(this, paint, false, bounds);             \
     while (looper.next()) {                                         \
-        SkDrawIter          iter(this);
+        SkDrawIter          iter(this);                             \
+        printf("looper.next \n");
 
 #define LOOPER_END    }
 
@@ -1940,6 +1943,7 @@ void SkCanvas::internalDrawPaint(const SkPaint& paint) {
     LOOPER_BEGIN_CHECK_COMPLETE_OVERWRITE(paint, nullptr, false)
 
     while (iter.next()) {
+        printf("iter.next \n");
         iter.fDevice->drawPaint(looper.paint());
     }
 
@@ -2677,6 +2681,10 @@ void SkCanvas::onDrawAnnotation(const SkRect& rect, const char key[], SkData* va
 //////////////////////////////////////////////////////////////////////////////
 // These methods are NOT virtual, and therefore must call back into virtual
 // methods, rather than actually drawing themselves.
+// 
+// 这些方法非virtual方法, 所以需要回调到virtual方法之中，而不是直接drawing自己
+// TODO: wangdong 没看懂这句话什么意思, 回调到哪个virtual方法?
+// TODO: wangdong https://zh.cppreference.com/w/cpp/language/virtual (to see virtual)
 //////////////////////////////////////////////////////////////////////////////
 
 void SkCanvas::drawColor(SkColor c, SkBlendMode mode) {
@@ -2698,6 +2706,10 @@ void SkCanvas::drawLine(SkScalar x0, SkScalar y0, SkScalar x1, SkScalar y1, cons
     this->drawPoints(kLines_PointMode, 2, pts, paint);
 }
 
+/**
+    @param cx: centerX
+    @param cy: centerY
+ */
 void SkCanvas::drawCircle(SkScalar cx, SkScalar cy, SkScalar radius, const SkPaint& paint) {
     if (radius < 0) {
         radius = 0;

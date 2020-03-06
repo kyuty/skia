@@ -42,9 +42,13 @@ void SkGraphics::GetVersion(int32_t* major, int32_t* minor, int32_t* patch) {
     }
 }
 
+// 关于cpu的feature的init
 void SkGraphics::Init() {
     // SkGraphics::Init() must be thread-safe and idempotent.
+    //printf("SkGraphics init 1\n");
     SkCpu::CacheRuntimeFeatures();
+    //printf("SkGraphics init 2\n");
+    //SkCpu::CacheRuntimeFeatures();
     SkOpts::Init();
 }
 
